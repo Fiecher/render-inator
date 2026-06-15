@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>render-inator</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230e0d0b'/%3E%3Cg fill='%23ff4000'%3E%3Crect x='16' y='16' width='9' height='9' fill-opacity='.35'/%3E%3Crect x='28' y='16' width='9' height='9' fill-opacity='.35'/%3E%3Crect x='40' y='16' width='9' height='9'/%3E%3Crect x='16' y='28' width='9' height='9' fill-opacity='.35'/%3E%3Crect x='28' y='28' width='9' height='9'/%3E%3Crect x='40' y='28' width='9' height='9' fill-opacity='.35'/%3E%3Crect x='16' y='40' width='9' height='9'/%3E%3Crect x='28' y='40' width='9' height='9' fill-opacity='.35'/%3E%3Crect x='40' y='40' width='9' height='9' fill-opacity='.35'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Bebas+Neue&display=swap" rel="stylesheet">
@@ -21,7 +22,10 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; display: flex;
+    margin: 0; display: flex;
+    height: 100vh;
+    height: 100dvh;
+    height: var(--app-height, 100dvh);
     font: 14px/1.5 var(--font-body);
     background: var(--bg); color: var(--fg);
     -webkit-font-smoothing: antialiased;
@@ -163,7 +167,10 @@
     body { flex-direction: column; }
     #stage { min-height: 0; }
     aside {
-      width: 100%; max-height: 52vh; padding-top: 8px;
+      width: 100%; padding-top: 8px;
+      max-height: 52vh;
+      max-height: 52dvh;
+      max-height: calc(var(--app-height, 100dvh) * .52);
       border-left: none; border-top: 1px solid var(--line);
       transition: max-height .3s ease;
     }
@@ -195,9 +202,9 @@
           </svg>
         </button>
         <button class="shade" type="button" data-mode="crystal" title="Crystal" aria-label="Crystal">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
-            <path d="M12 2.5 5 9l7 12.5L19 9z" fill="currentColor" fill-opacity=".22"/>
-            <path d="M5 9h14M12 2.5 9.5 9l2.5 12.5M12 2.5 14.5 9 12 21.5"/>
+          <svg viewBox="0 0 24 24">
+            <path fill="currentColor" d="M12 2.7 19.27 6.2 21.07 14.07 16.03 20.38 7.97 20.38 2.93 14.07 4.73 6.2Z"/>
+            <path fill="#fff" opacity=".55" d="M12 2.7 4.73 6.2 11 12.6Z"/>
           </svg>
         </button>
       </div>
@@ -356,7 +363,17 @@
     requestAnimationFrame(frame);
   }
 
-  addEventListener('resize', () => { pendingResize = true; });
+  const syncAppHeight = () => {
+    const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', h + 'px');
+    pendingResize = true;
+  };
+  syncAppHeight();
+  addEventListener('resize', syncAppHeight);
+  if (window.visualViewport) {
+    visualViewport.addEventListener('resize', syncAppHeight);
+    visualViewport.addEventListener('scroll', syncAppHeight);
+  }
   if (window.ResizeObserver) {
     new ResizeObserver(() => { pendingResize = true; }).observe(stage);
   }
