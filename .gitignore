@@ -19,6 +19,3 @@ Thumbs.db
 .idea/tasks.xml
 .idea/usage.statistics.xml
 .idea/shelf/
-
-# Claude local settings
-.claude/settings.local.json
