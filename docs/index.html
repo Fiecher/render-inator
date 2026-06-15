@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>render-inator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:     #0b0a09;
+    --panel:  #0e0d0b;
+    --fg:     #dfe1d7;
+    --muted:  rgba(223, 225, 215, .45);
+    --line:   rgba(223, 225, 215, .14);
+    --accent: #ff4000;
+    --font-display: 'Bebas Neue', 'Arial Narrow', sans-serif;
+    --font-body:    'Archivo', system-ui, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex;
+    font: 14px/1.5 var(--font-body);
+    background: var(--bg); color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  #view {
+    display: block; width: 100%; height: 100%;
+    cursor: grab; background: var(--bg);
+    touch-action: none;
+  }
+  #view:active { cursor: grabbing; }
+  #hud {
+    position: absolute; top: 14px; left: 14px;
+    padding: 3px 10px;
+    font-family: var(--font-display); font-size: 15px; letter-spacing: .08em;
+    color: var(--accent); background: rgba(11, 10, 9, .6);
+    border: 1px solid var(--line);
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  .spinner {
+    position: absolute; top: 50%; left: 50%;
+    width: 34px; height: 34px; margin: -17px 0 0 -17px;
+    border: 3px solid rgba(255, 64, 0, .22);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .7s linear infinite; pointer-events: none;
+  }
+  .spinner[hidden] { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .viewport-tools {
+    position: absolute; top: 14px; right: 14px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  }
+  .shade-bar {
+    display: flex; gap: 2px; padding: 3px;
+    background: rgba(11, 10, 9, .6); border: 1px solid var(--line);
+  }
+  .shade {
+    width: 30px; height: 30px; margin: 0; padding: 0;
+    display: grid; place-content: center;
+    background: none; border: none; color: var(--muted);
+    cursor: pointer; transition: color .12s, background .12s;
+  }
+  .shade svg { width: 18px; height: 18px; display: block; }
+  .shade:hover { background: rgba(223, 225, 215, .06); color: var(--fg); }
+  .shade.active { color: var(--accent); background: rgba(255, 64, 0, .12); }
+  .sheet-handle {
+    display: none; width: 100%; height: 28px; margin: 0 0 6px; padding: 0;
+    background: none; border: none; cursor: pointer;
+  }
+  .sheet-handle:hover { background: none; }
+  .sheet-handle span {
+    display: block; width: 42px; height: 4px; margin: 0 auto; border-radius: 2px;
+    background: var(--muted); transition: background .12s;
+  }
+  .sheet-handle:hover span { background: var(--accent); }
+  aside {
+    width: 300px; padding: 22px 20px; overflow-y: auto;
+    background: var(--panel); border-left: 1px solid var(--line);
+  }
+  .brand { margin: 0 0 22px; }
+  h1 {
+    margin: 0; font-family: var(--font-display); font-weight: 400;
+    font-size: 44px; line-height: .85; letter-spacing: .02em;
+  }
+  h1 .dot { color: var(--accent); }
+  fieldset {
+    border: none; border-top: 1px solid var(--line);
+    margin: 0; padding: 16px 0 8px;
+  }
+  legend {
+    display: block; padding: 0; margin-bottom: 10px;
+    font-family: var(--font-display); font-size: 19px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--fg);
+  }
+  legend.legend-row {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+  }
+  .add-btn {
+    width: 26px; height: 26px; margin: 0; padding: 0;
+    display: grid; place-content: center;
+    background: none; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 3px; cursor: pointer;
+    transition: color .12s, border-color .12s, background .12s;
+  }
+  .add-btn svg { width: 16px; height: 16px; display: block; }
+  .add-btn:hover { color: var(--accent); border-color: var(--accent); background: rgba(255, 64, 0, .08); }
+  .add-btn:active { transform: scale(.92); }
+  button {
+    width: 100%; margin-top: 12px; padding: 9px 12px;
+    font-family: var(--font-display); font-size: 16px;
+    text-transform: uppercase; letter-spacing: .1em;
+    background: transparent; color: var(--fg);
+    border: 1px solid var(--accent); cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  button:hover { background: var(--accent); color: var(--bg); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .models { list-style: none; margin: 12px 0 0; padding: 0; }
+  .models li {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 4px; padding: 7px 10px;
+    border: 1px solid var(--line); cursor: pointer;
+    font-size: 12px; letter-spacing: .02em;
+    background-color: rgba(255, 64, 0, 0);
+    transition: border-color .08s ease-out, color .08s ease-out,
+                background-color .08s ease-out, transform .08s ease-out,
+                box-shadow .08s ease-out;
+  }
+  .models li:hover {
+    border-color: var(--accent);
+    background-color: rgba(255, 64, 0, .07);
+    transform: translateX(3px);
+  }
+  .models li:active {
+    transform: translateX(3px) scale(.98);
+    background-color: rgba(255, 64, 0, .14);
+  }
+  .models li.active {
+    border-color: var(--accent); color: var(--accent);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .models li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .models li .del {
+    width: auto; margin: 0; padding: 0 2px; border: none;
+    background: none; color: var(--muted);
+    font-family: var(--font-body); font-size: 15px; line-height: 1; letter-spacing: 0;
+    transition: color .08s ease-out, transform .08s ease-out;
+  }
+  .models li .del:hover { background: none; color: var(--accent); transform: scale(1.3); }
+  .models li .del:active { transform: scale(.85); }
+  .muted { color: var(--muted); }
+  #status {
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+    min-height: 1.4em; word-break: break-word;
+    font-size: 12px; letter-spacing: .03em;
+  }
+  .err { color: var(--accent); }
+  @media (max-width: 700px) {
+    body { flex-direction: column; }
+    #stage { min-height: 0; }
+    aside {
+      width: 100%; max-height: 52vh; padding-top: 8px;
+      border-left: none; border-top: 1px solid var(--line);
+      transition: max-height .3s ease;
+    }
+    body.panel-collapsed aside { max-height: 42px; overflow: hidden; }
+    .sheet-handle { display: block; }
+    h1 { font-size: 36px; }
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="hud">—</div>
+    <div id="spinner" class="spinner" hidden></div>
+    <div class="viewport-tools">
+      <div id="shading" class="shade-bar" role="group" aria-label="Viewport shading">
+        <button class="shade" type="button" data-mode="wireframe" title="Wireframe" aria-label="Wireframe">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="3.6" ry="9"/><path d="M3 12h18"/>
+          </svg>
+        </button>
+        <button class="shade" type="button" data-mode="solid" title="Solid" aria-label="Solid">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="currentColor"/></svg>
+        </button>
+        <button class="shade" type="button" data-mode="material" title="Material" aria-label="Material">
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" fill="currentColor"/>
+            <circle cx="8.6" cy="8.6" r="2.4" fill="#fff" opacity=".55"/>
+          </svg>
+        </button>
+        <button class="shade" type="button" data-mode="crystal" title="Crystal" aria-label="Crystal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+            <path d="M12 2.5 5 9l7 12.5L19 9z" fill="currentColor" fill-opacity=".22"/>
+            <path d="M5 9h14M12 2.5 9.5 9l2.5 12.5M12 2.5 14.5 9 12 21.5"/>
+          </svg>
+        </button>
+      </div>
+      <div class="shade-bar" role="group" aria-label="Viewport tools">
+        <button id="reset" class="shade" type="button" title="Reset camera" aria-label="Reset camera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 5.5v4h4"/><path d="M4.6 13a7.5 7.5 0 1 0 1.8-7L4 9.5"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <aside>
+    <button id="sheetHandle" class="sheet-handle" type="button" aria-label="Show or hide panel"><span></span></button>
+    <div class="brand">
+      <h1>render<span class="dot">·</span>inator</h1>
+    </div>
+
+    <fieldset>
+      <legend class="legend-row">
+        <span>Model</span>
+        <button id="addModel" class="add-btn" type="button" title="Add model" aria-label="Add model">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        </button>
+      </legend>
+      <input id="file" type="file" accept=".obj,.mtl,.png,.jpg,.jpeg" multiple hidden>
+      <ul id="models" class="models" hidden></ul>
+    </fieldset>
+
+    <div id="status" class="muted">Loading WASM…</div>
+  </aside>
+
+<script src="wasm_exec.js"></script>
+<script>
+(() => {
+  const canvas = document.getElementById('view');
+  const stage  = document.getElementById('stage');
+  const ctx    = canvas.getContext('2d');
+  const hud    = document.getElementById('hud');
+  const status = document.getElementById('status');
+  const fileEl = document.getElementById('file');
+  const modelsEl = document.getElementById('models');
+  const shadeBtns = [...document.querySelectorAll('#shading .shade')];
+  const sheetHandle = document.getElementById('sheetHandle');
+
+  const MAX_DIM = 1024;
+  let bufScale = 1;
+  let orbitDX = 0, orbitDY = 0;
+  let panDX = 0, panDY = 0;
+  let zoomAcc = 1;
+  const pointers = new Map();
+  let pendingResize = true;
+  let frames = 0, fpsT = performance.now(), fps = 0;
+  let transition = null, snapCanvas = null, maskCanvas = null;
+
+  function setStatus(msg, isErr) {
+    status.textContent = msg;
+    status.className = isErr ? 'err' : 'muted';
+  }
+
+  function applyResize() {
+    const cw = Math.max(1, stage.clientWidth), ch = Math.max(1, stage.clientHeight);
+    bufScale = Math.min(1, MAX_DIM / Math.max(cw, ch));
+    canvas.width  = Math.max(1, Math.round(cw * bufScale));
+    canvas.height = Math.max(1, Math.round(ch * bufScale));
+    goResizeBuffer(canvas.width, canvas.height);
+  }
+
+  let shadingMode = 'material';
+  let currentHasTex = false;
+
+  function syncConfig() {
+    const material = shadingMode === 'material';
+    const crystal = shadingMode === 'crystal';
+    goSetRenderConfig(
+      shadingMode === 'wireframe',
+      material && currentHasTex,
+      shadingMode !== 'wireframe' && !crystal,
+      false,
+      crystal,
+    );
+  }
+
+  function setShadingMode(mode) {
+    shadingMode = mode;
+    for (const b of shadeBtns) {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    syncConfig();
+  }
+
+  function frame(t) {
+    if (pendingResize) { applyResize(); pendingResize = false; }
+
+    goInputCamera(orbitDX * bufScale, orbitDY * bufScale,
+                  panDX * bufScale, panDY * bufScale, zoomAcc);
+    orbitDX = orbitDY = panDX = panDY = 0;
+    zoomAcc = 1;
+
+    goRenderFrame();
+    const buf = goGetPixelBuffer();
+    ctx.putImageData(new ImageData(buf, canvas.width, canvas.height), 0, 0);
+
+    if (transition) {
+      if (transition.start === null) transition.start = t;
+      const k = (t - transition.start) / transition.dur;
+      if (k >= 1) {
+        transition = null;
+      } else {
+        const e = k * k * k * (k * (k * 6 - 15) + 10);
+        const W = canvas.width, H = canvas.height;
+        const slope = 0.16;
+        const L = Math.hypot(slope, 1);
+        const feather = Math.max(56, H * 0.16);
+        const span = H + W * slope + feather;
+        const c = span * (1 - e) - feather * 0.5;
+
+        if (!maskCanvas) maskCanvas = document.createElement('canvas');
+        if (maskCanvas.width !== W || maskCanvas.height !== H) { maskCanvas.width = W; maskCanvas.height = H; }
+        const mctx = maskCanvas.getContext('2d');
+        mctx.globalCompositeOperation = 'source-over';
+        mctx.clearRect(0, 0, W, H);
+        mctx.drawImage(snapCanvas, 0, 0, W, H);
+        mctx.globalCompositeOperation = 'destination-out';
+        const nx = slope / L, ny = 1 / L;
+        const g = mctx.createLinearGradient(
+          -(feather / 2) * nx, c - (feather / 2) * ny,
+           (feather / 2) * nx, c + (feather / 2) * ny);
+        g.addColorStop(0, 'rgba(0,0,0,0)');
+        g.addColorStop(1, 'rgba(0,0,0,1)');
+        mctx.fillStyle = g;
+        mctx.fillRect(0, 0, W, H);
+        ctx.drawImage(maskCanvas, 0, 0);
+
+        ctx.save();
+        ctx.globalAlpha = Math.sin(Math.PI * k) * 0.9;
+        ctx.strokeStyle = '#ff4000';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, c);
+        ctx.lineTo(W, c - W * slope);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    frames++;
+    if (t - fpsT >= 500) { fps = Math.round(frames * 1000 / (t - fpsT)); frames = 0; fpsT = t; }
+    hud.textContent = `${canvas.width}×${canvas.height}  ${fps} fps`;
+
+    requestAnimationFrame(frame);
+  }
+
+  addEventListener('resize', () => { pendingResize = true; });
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => { pendingResize = true; }).observe(stage);
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, button: e.button });
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', e => {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const oldDist = Math.hypot(a.x - b.x, a.y - b.y);
+      const oldMidX = (a.x + b.x) / 2, oldMidY = (a.y + b.y) / 2;
+      p.x = e.clientX; p.y = e.clientY;
+      const newDist = Math.hypot(a.x - b.x, a.y - b.y);
+      if (oldDist > 0 && newDist > 0) zoomAcc *= oldDist / newDist;
+      panDX += (a.x + b.x) / 2 - oldMidX;
+      panDY += (a.y + b.y) / 2 - oldMidY;
+      return;
+    }
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (p.button === 2 || e.shiftKey) { panDX += dx; panDY += dy; }
+    else { orbitDX += dx; orbitDY += dy; }
+    p.x = e.clientX; p.y = e.clientY;
+  });
+
+  const dropPointer = e => pointers.delete(e.pointerId);
+  canvas.addEventListener('pointerup', dropPointer);
+  canvas.addEventListener('pointercancel', dropPointer);
+
+  canvas.addEventListener('wheel', e => {
+    zoomAcc *= Math.exp(e.deltaY * 0.0012);
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  document.getElementById('reset').onclick = () => goResetCamera();
+  canvas.addEventListener('dblclick', () => goResetCamera());
+
+  shadeBtns.forEach(b => b.onclick = () => setShadingMode(b.dataset.mode));
+  document.getElementById('addModel').onclick = () => fileEl.click();
+  sheetHandle.onclick = () => document.body.classList.toggle('panel-collapsed');
+
+  const baseName = p => p.replace(/\\/g, '/').split('/').pop().trim();
+
+  async function decodeImageRGBA(blob) {
+    const bmp = await createImageBitmap(blob);
+    const w = bmp.width, h = bmp.height;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const cx = c.getContext('2d');
+    cx.drawImage(bmp, 0, 0);
+    const data = cx.getImageData(0, 0, w, h).data;
+    if (bmp.close) bmp.close();
+    return { rgba: new Uint8Array(data.buffer), w, h };
+  }
+
+  async function extractTexture(objText, resolve) {
+    const mtlRef = objText.match(/^\s*mtllib\s+(.+)$/m);
+    if (!mtlRef) return null;
+    const mtl = await resolve(baseName(mtlRef[1]));
+    if (!mtl) return null;
+    const kd = (await mtl.text()).match(/^\s*map_Kd\s+(.+)$/m);
+    if (!kd) return null;
+    const img = await resolve(baseName(kd[1].trim().split(/\s+/).pop()));
+    if (!img) return null;
+    try { return await decodeImageRGBA(img); }
+    catch (e) { console.warn('texture decode failed:', e); return null; }
+  }
+
+  const DB_NAME = 'render-inator', STORE = 'models';
+  let models = [];
+  let currentId = null;
+
+  function openDB() {
+    return new Promise((res, rej) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+  }
+  function dbReq(mode, run) {
+    return openDB().then(db => new Promise((res, rej) => {
+      const r = run(db.transaction(STORE, mode).objectStore(STORE));
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    }));
+  }
+  const dbAdd    = rec => dbReq('readwrite', s => s.add(rec));
+  const dbAll    = ()  => dbReq('readonly',  s => s.getAll());
+  const dbDelete = id  => dbReq('readwrite', s => s.delete(id));
+
+  function beginWipe() {
+    if (transition || currentId === null || canvas.width <= 1) return;
+    if (!snapCanvas) snapCanvas = document.createElement('canvas');
+    snapCanvas.width = canvas.width; snapCanvas.height = canvas.height;
+    snapCanvas.getContext('2d').drawImage(canvas, 0, 0);
+    transition = { start: null, dur: 560 };
+  }
+
+  function applyModel(rec) {
+    const err = goLoadModel(rec.objText);
+    if (err) { transition = null; setStatus('Error: ' + err, true); return false; }
+    currentHasTex = !!rec.tex;
+    if (rec.tex) goLoadTexture(rec.tex.rgba, rec.tex.w, rec.tex.h);
+    syncConfig();
+    currentId = rec.id;
+    try { localStorage.setItem('lastModel', String(rec.id)); } catch (e) {}
+    setStatus('Loaded ' + rec.name + (rec.tex ? ' + texture.' : '.'));
+    renderModelList();
+    if (transition) transition.start = null;
+    return true;
+  }
+
+  const HEAVY_BYTES = 400000;
+  let loadingModel = false;
+
+  function markActiveId(id) {
+    for (const li of modelsEl.children)
+      li.classList.toggle('active', li.dataset.id === String(id));
+  }
+
+  function selectModel(id) {
+    const rec = models.find(m => m.id === id);
+    if (!rec) return false;
+    if (id !== currentId) beginWipe();
+    if (id !== currentId && rec.objText.length > HEAVY_BYTES) {
+      if (loadingModel) return true;
+      loadingModel = true;
+      document.getElementById('spinner').hidden = false;
+      markActiveId(id);
+      setStatus('Loading ' + rec.name + '…');
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        applyModel(rec);
+        document.getElementById('spinner').hidden = true;
+        loadingModel = false;
+      }));
+      return true;
+    }
+    return applyModel(rec);
+  }
+
+  async function removeModel(id) {
+    if (typeof id === 'number') { try { await dbDelete(id); } catch (e) {} }
+    if (id === 'sphere') { try { localStorage.setItem('sphereDeleted', '1'); } catch (e) {} }
+    const wasCurrent = currentId === id;
+    models = models.filter(m => m.id !== id);
+    if (models.length === 0) {
+      goClearModel();
+      currentId = null;
+      try { localStorage.removeItem('lastModel'); } catch (e) {}
+      setStatus('Ready. Load an OBJ to begin.');
+      renderModelList();
+    } else if (wasCurrent) {
+      selectModel(models[models.length - 1].id);
+    } else {
+      renderModelList();
+    }
+  }
+
+  function renderModelList() {
+    modelsEl.innerHTML = '';
+    for (const rec of models) {
+      const li = document.createElement('li');
+      li.dataset.id = rec.id;
+      if (rec.id === currentId) li.className = 'active';
+      li.onclick = () => selectModel(rec.id);
+      const name = document.createElement('span');
+      name.className = 'name'; name.textContent = rec.name;
+      li.append(name);
+      const del = document.createElement('button');
+      del.className = 'del'; del.type = 'button';
+      del.textContent = '×'; del.title = 'Remove';
+      del.onclick = e => { e.stopPropagation(); removeModel(rec.id); };
+      li.append(del);
+      modelsEl.append(li);
+    }
+    modelsEl.hidden = models.length === 0;
+  }
+
+  fileEl.onchange = async () => {
+    const files = [...fileEl.files];
+    if (!files.length) return;
+    const objFile = files.find(f => f.name.toLowerCase().endsWith('.obj'));
+    if (!objFile) { setStatus('Select the .obj (add its .mtl + image too).', true); return; }
+    setStatus('Loading ' + objFile.name + '…');
+    const objText = await objFile.text();
+    const byName = new Map(files.map(f => [f.name.toLowerCase(), f]));
+    const tex = await extractTexture(objText, async n => byName.get(n.toLowerCase()) || null);
+    const rec = { id: 'tmp-' + Date.now(), name: objFile.name, objText, tex };
+    models.push(rec);
+    if (rec.id !== currentId) beginWipe();
+    if (!applyModel(rec)) { models.pop(); renderModelList(); fileEl.value = ''; return; }
+    try {
+      const dbId = await dbAdd({ name: rec.name, objText, tex });
+      if (currentId === rec.id) currentId = dbId;
+      rec.id = dbId;
+      try { localStorage.setItem('lastModel', String(dbId)); } catch (e) {}
+      renderModelList();
+    } catch (e) {}
+    fileEl.value = '';
+  };
+
+  const go = new Go();
+  window.onWasmReady = async () => {
+    setShadingMode(shadingMode);
+    let sphereDeleted = false;
+    try { sphereDeleted = !!localStorage.getItem('sphereDeleted'); } catch (e) {}
+    if (!sphereDeleted) {
+      try {
+        const objText = await (await fetch('models/sphere.obj')).text();
+        const tex = await extractTexture(objText, async n => {
+          const r = await fetch('models/' + n);
+          return r.ok ? r.blob() : null;
+        });
+        models.push({ id: 'sphere', name: 'sphere (default)', objText, tex });
+      } catch (e) {}
+    }
+    try { for (const rec of await dbAll()) models.push(rec); }
+    catch (e) { console.warn('model store:', e); }
+
+    if (models.length) {
+      let startId = models[models.length - 1].id;
+      try {
+        const last = localStorage.getItem('lastModel');
+        const hit = last !== null && models.find(m => String(m.id) === last);
+        if (hit) startId = hit.id;
+      } catch (e) {}
+      selectModel(startId);
+    } else {
+      setStatus('Ready. Load an OBJ to begin.');
+    }
+    requestAnimationFrame(frame);
+  };
+
+  fetch('main.wasm')
+    .then(r => r.arrayBuffer())
+    .then(b => WebAssembly.instantiate(b, go.importObject))
+    .then(res => go.run(res.instance))
+    .catch(e => setStatus('Failed to load WASM: ' + e.message, true));
+})();
+</script>
+</body>
+</html>
