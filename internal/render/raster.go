@@ -15,7 +15,14 @@ func edge(ax, ay, bx, by, cx, cy float32) float32 {
 	return (cx-ax)*(by-ay) - (cy-ay)*(bx-ax)
 }
 
-func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, t *model.Tri, a, b, c *vert, toLight m.Vec3) {
+const (
+	studioGround      = 0.30
+	studioSky         = 0.58
+	studioKeyStrength = 0.5
+	studioSpec        = 0.28
+)
+
+func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b, c *vert, toLight m.Vec3) {
 	area := edge(a.sx, a.sy, b.sx, b.sy, c.sx, c.sy)
 	if area == 0 {
 		return
@@ -55,11 +62,18 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, t *model.Tri, a, b, c *ver
 		uvA, uvB, uvC = msh.UVs[t.UV[0]], msh.UVs[t.UV[1]], msh.UVs[t.UV[2]]
 	}
 
+	spec := useLight && !p.cfg.Flat
 	var iA, iB, iC float32
+	var dA, dB, dC float32
 	if useLight {
-		iA = vertLight(a.n, toLight)
-		iB = vertLight(b.n, toLight)
-		iC = vertLight(c.n, toLight)
+		if p.cfg.Flat {
+			fi := vertLight(msh.FaceNormals[ti], toLight)
+			iA, iB, iC = fi, fi, fi
+		} else {
+			iA, dA = p.studioVert(a.n)
+			iB, dB = p.studioVert(b.n)
+			iC, dC = p.studioVert(c.n)
+		}
 	}
 
 	anchorX := float32(minX) + 0.5
@@ -113,12 +127,25 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, t *model.Tri, a, b, c *ver
 				}
 				col = p.tex.ColorAt(uu, vv)
 			}
-			if useLight {
-				col = col.scale(w0*iA + w1*iB + w2*iC)
-			}
-
 			p.zbuf.data[idx] = depth
 			o := idx * 4
+			if useLight {
+				col = col.scale(w0*iA + w1*iB + w2*iC)
+				if spec {
+					if d := w0*dA + w1*dB + w2*dC; d > 0 {
+						d2 := d * d
+						d4 := d2 * d2
+						d8 := d4 * d4
+						d16 := d8 * d8
+						s := studioSpec * (d16 * d16 * d16) * 255
+						p.pixels[o] = satU8(float32(col.R) + s)
+						p.pixels[o+1] = satU8(float32(col.G) + s)
+						p.pixels[o+2] = satU8(float32(col.B) + s)
+						p.pixels[o+3] = col.A
+						continue
+					}
+				}
+			}
 			p.pixels[o] = col.R
 			p.pixels[o+1] = col.G
 			p.pixels[o+2] = col.B
@@ -127,12 +154,33 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, t *model.Tri, a, b, c *ver
 	}
 }
 
-func vertLight(n, toLight m.Vec3) float32 {
+func absDot(n, toLight m.Vec3) float32 {
 	d := n.Dot(toLight)
 	if d < 0 {
 		d = -d
 	}
-	return ambient + (1-ambient)*d
+	return d
+}
+
+func vertLight(n, toLight m.Vec3) float32 {
+	return ambient + (1-ambient)*absDot(n, toLight)
+}
+
+func (p *Pipeline) studioVert(n m.Vec3) (diff, sdot float32) {
+	if n.Dot(p.stCam) < 0 {
+		n = n.Neg()
+	}
+	hemi := studioGround + (studioSky-studioGround)*(0.5+0.5*n.Dot(p.stUp))
+	k := n.Dot(p.stKey)
+	if k < 0 {
+		k = 0
+	}
+	diff = hemi + studioKeyStrength*k
+	sdot = n.Dot(p.stHalf)
+	if sdot < 0 {
+		sdot = 0
+	}
+	return diff, sdot
 }
 
 func (p *Pipeline) wireTriangle(a, b, c *vert) {

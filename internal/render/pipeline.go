@@ -45,6 +45,15 @@ type Pipeline struct {
 	backVZ            []float32
 	crystalCenterView m.Vec3
 	crystalCoreInvR   float32
+
+	spCellX, spCellY, spCellZ int32
+	spRN                      m.Vec3
+	spHas                     bool
+
+	stKey  m.Vec3
+	stHalf m.Vec3
+	stUp   m.Vec3
+	stCam  m.Vec3
 }
 
 func NewPipeline(w, h int) *Pipeline {
@@ -155,6 +164,7 @@ func (p *Pipeline) Render(msh *model.Mesh, cam Camera) {
 	}
 
 	toLight := cam.LightDir().Normalize().Neg()
+	p.setupStudio(view)
 	wireOnly := p.cfg.Wireframe && !p.cfg.Texture && !p.cfg.Lighting
 	for ti := range msh.Tris {
 		t := &msh.Tris[ti]
@@ -163,7 +173,7 @@ func (p *Pipeline) Render(msh *model.Mesh, cam Camera) {
 			continue
 		}
 		if !wireOnly {
-			p.rasterizeTriangle(msh, t, a, b, c, toLight)
+			p.rasterizeTriangle(msh, ti, t, a, b, c, toLight)
 		}
 		if p.cfg.Wireframe {
 			p.wireTriangle(a, b, c)
@@ -199,6 +209,17 @@ func (p *Pipeline) projectVerts(msh *model.Mesh, vp, view m.Mat4) {
 		}
 		v.ok = true
 	}
+}
+
+func (p *Pipeline) setupStudio(view m.Mat4) {
+	right := m.Vec3{X: view[0], Y: view[1], Z: view[2]}
+	up := m.Vec3{X: view[4], Y: view[5], Z: view[6]}
+	toCam := m.Vec3{X: view[8], Y: view[9], Z: view[10]}
+	key := up.Scale(0.45).Add(right.Scale(0.2)).Add(toCam).Normalize()
+	p.stKey = key
+	p.stHalf = key.Add(toCam).Normalize()
+	p.stUp = up
+	p.stCam = toCam
 }
 
 func (p *Pipeline) clear() {

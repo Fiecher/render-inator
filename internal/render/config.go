@@ -6,4 +6,5 @@ type RenderConfig struct {
 	Lighting  bool
 	Cull      bool
 	Crystal   bool
+	Flat      bool
 }

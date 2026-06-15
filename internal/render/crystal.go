@@ -137,6 +137,7 @@ func (p *Pipeline) crystalTriangle(a, b, c *vert, n m.Vec3, rainbow RGBf, back b
 	wide := maxX - minX
 	spanSolve := wide >= 16
 
+	p.spHas = false
 	anchorX := float32(minX) + 0.5
 	for y := minY; y <= maxY; y++ {
 		py := float32(y) + 0.5
@@ -177,33 +178,34 @@ func (p *Pipeline) crystalTriangle(a, b, c *vert, n m.Vec3, rainbow RGBf, back b
 			vz := w0*a.vz + w1*b.vz + w2*c.vz
 			vdir := m.Vec3{X: -vx, Y: -vy, Z: -vz}.Normalize()
 
-			var obj m.Vec3
-			if !back {
-				obj = m.Vec3{
-					X: w0*a.ox + w1*b.ox + w2*c.ox,
-					Y: w0*a.oy + w1*b.oy + w2*c.oy,
-					Z: w0*a.oz + w1*b.oz + w2*c.oz,
-				}
-			}
-
-			col, alpha := p.crystalShade(n, vdir, obj, rainbow, vz, idx, back)
-
 			p.zbuf.data[idx] = depth
 			o := idx * 4
 			if back {
-				p.pixels[o] = satU8(col.R * 255)
-				p.pixels[o+1] = satU8(col.G * 255)
-				p.pixels[o+2] = satU8(col.B * 255)
+				ndv := n.Dot(vdir)
+				if ndv < 0 {
+					ndv = 0
+				}
+				const dim = 0.40
+				p.pixels[o] = satU8(accentf.R * dim * (0.4 + 0.6*ndv) * 255)
+				p.pixels[o+1] = satU8(accentf.G * dim * 0.5 * ndv * 255)
+				p.pixels[o+2] = 0
 				p.pixels[o+3] = 255
 				p.backVZ[idx] = vz
-			} else {
-				p.blendPixel(o, col, alpha)
+				continue
 			}
+
+			obj := m.Vec3{
+				X: w0*a.ox + w1*b.ox + w2*c.ox,
+				Y: w0*a.oy + w1*b.oy + w2*c.oy,
+				Z: w0*a.oz + w1*b.oz + w2*c.oz,
+			}
+			col, alpha := p.crystalShadeFront(n, vdir, obj, rainbow, vz, idx)
+			p.blendPixel(o, col, alpha)
 		}
 	}
 }
 
-func (p *Pipeline) crystalShade(n, v, obj m.Vec3, rainbow RGBf, vz float32, idx int, back bool) (RGBf, float32) {
+func (p *Pipeline) crystalShadeFront(n, v, obj m.Vec3, rainbow RGBf, vz float32, idx int) (RGBf, float32) {
 
 	ndv := n.Dot(v)
 	if ndv < 0 {
@@ -232,12 +234,6 @@ func (p *Pipeline) crystalShade(n, v, obj m.Vec3, rainbow RGBf, vz float32, idx 
 	col.G += rimGain*rainbow.G + spec
 	col.B += rimGain*rainbow.B + spec
 
-	if back {
-
-		const dim = 0.40
-		return RGBf{accentf.R * dim * (0.4 + 0.6*ndv), accentf.G * dim * 0.5 * ndv, 0}, 1
-	}
-
 	thick := (vz - p.backVZ[idx]) * p.sparkleInvR
 	if thick < 0 {
 		thick = 0
@@ -261,13 +257,17 @@ func (p *Pipeline) crystalShade(n, v, obj m.Vec3, rainbow RGBf, vz float32, idx 
 	col.G += coreCol.G * core * coreGain
 	col.B += coreCol.B * core * coreGain
 
-	nobj := m.Vec3{
-		X: (obj.X - p.sparkleCenter.X) * p.sparkleInvR,
-		Y: (obj.Y - p.sparkleCenter.Y) * p.sparkleInvR,
-		Z: (obj.Z - p.sparkleCenter.Z) * p.sparkleInvR,
+	gx := fastFloorI((obj.X - p.sparkleCenter.X) * p.sparkleInvR * sparkleDensity)
+	gy := fastFloorI((obj.Y - p.sparkleCenter.Y) * p.sparkleInvR * sparkleDensity)
+	gz := fastFloorI((obj.Z - p.sparkleCenter.Z) * p.sparkleInvR * sparkleDensity)
+	var rn m.Vec3
+	if p.spHas && gx == p.spCellX && gy == p.spCellY && gz == p.spCellZ {
+		rn = p.spRN
+	} else {
+		rd := sparkleCellDir(gx, gy, gz)
+		rn = m.Vec3{X: rd.X + n.X, Y: rd.Y + n.Y, Z: rd.Z + n.Z}.Normalize()
+		p.spCellX, p.spCellY, p.spCellZ, p.spRN, p.spHas = gx, gy, gz, rn, true
 	}
-	rd := sparkleDir(nobj)
-	rn := m.Vec3{X: rd.X + n.X, Y: rd.Y + n.Y, Z: rd.Z + n.Z}.Normalize()
 	sd := v.Dot(rn)
 	if sd > 0 {
 		sd2 := sd * sd
@@ -293,10 +293,7 @@ func (p *Pipeline) crystalShade(n, v, obj m.Vec3, rainbow RGBf, vz float32, idx 
 
 const sparkleDensity = 70
 
-func sparkleDir(nobj m.Vec3) m.Vec3 {
-	gx := fastFloorI(nobj.X * sparkleDensity)
-	gy := fastFloorI(nobj.Y * sparkleDensity)
-	gz := fastFloorI(nobj.Z * sparkleDensity)
+func sparkleCellDir(gx, gy, gz int32) m.Vec3 {
 	h := uint32(gx)*73856093 ^ uint32(gy)*19349663 ^ uint32(gz)*83492791
 	h1 := hashU32(h)
 	h2 := hashU32(h1)

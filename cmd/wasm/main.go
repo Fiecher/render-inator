@@ -106,12 +106,17 @@ func setRenderConfig(_ js.Value, args []js.Value) any {
 	if len(args) >= 5 {
 		crystal = args[4].Bool()
 	}
+	flat := false
+	if len(args) >= 6 {
+		flat = args[5].Bool()
+	}
 	pipe.SetConfig(render.RenderConfig{
 		Wireframe: args[0].Bool(),
 		Texture:   args[1].Bool(),
 		Lighting:  args[2].Bool(),
 		Cull:      cull,
 		Crystal:   crystal,
+		Flat:      flat,
 	})
 	return nil
 }
