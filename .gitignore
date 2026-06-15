@@ -1,0 +1,24 @@
+# Build / temp artifacts
+# NOTE: docs/main.wasm, docs/wasm_exec.js and docs/models/* are intentionally
+# committed — GitHub Pages serves them as static files from /docs.
+.design-tmp/
+*.exe
+*.out
+
+# Go test / coverage
+*.test
+coverage.out
+coverage.html
+
+# OS
+.DS_Store
+Thumbs.db
+
+# JetBrains IDE (user-specific state)
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/usage.statistics.xml
+.idea/shelf/
+
+# Claude local settings
+.claude/settings.local.json
