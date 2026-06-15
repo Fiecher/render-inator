@@ -1,0 +1,207 @@
+package render
+
+import (
+	m "render-inator/internal/math"
+	"render-inator/internal/model"
+)
+
+type Camera interface {
+	View() m.Mat4
+	Projection() m.Mat4
+	LightDir() m.Vec3
+}
+
+type vert struct {
+	sx, sy     float32
+	sz         float32
+	invW       float32
+	n          m.Vec3
+	vx, vy, vz float32
+	ox, oy, oz float32
+	ok         bool
+}
+
+const nearEps = 1e-4
+
+type Pipeline struct {
+	w, h   int
+	pixels []byte
+	zbuf   *ZBuffer
+	vs     []vert
+
+	cfg  RenderConfig
+	tex  Texture
+	flat RGBA
+
+	cullSign int8
+
+	bgBuf []byte
+
+	crystalLUT [crystalLUTSize]RGBf
+
+	sparkleCenter m.Vec3
+	sparkleInvR   float32
+
+	backVZ            []float32
+	crystalCenterView m.Vec3
+	crystalCoreInvR   float32
+}
+
+func NewPipeline(w, h int) *Pipeline {
+	p := &Pipeline{
+		zbuf: NewZBuffer(w, h),
+		flat: RGBA{200, 200, 205, 255},
+		tex:  defaultTexture(),
+	}
+	p.initCrystal()
+	p.Resize(w, h)
+	return p
+}
+
+func (p *Pipeline) Resize(w, h int) {
+	p.w, p.h = w, h
+	n := w * h * 4
+	if cap(p.pixels) < n {
+		p.pixels = make([]byte, n)
+	} else {
+		p.pixels = p.pixels[:n]
+	}
+	p.zbuf.Resize(w, h)
+	if cap(p.backVZ) < w*h {
+		p.backVZ = make([]float32, w*h)
+	} else {
+		p.backVZ = p.backVZ[:w*h]
+	}
+	p.buildBackground()
+}
+
+func (p *Pipeline) buildBackground() {
+	n := p.w * p.h * 4
+	if cap(p.bgBuf) < n {
+		p.bgBuf = make([]byte, n)
+	} else {
+		p.bgBuf = p.bgBuf[:n]
+	}
+	if p.w == 0 || p.h == 0 {
+		return
+	}
+
+	const (
+		cR, cG, cB = float32(36), float32(30), float32(33)
+		eR, eG, eB = float32(10), float32(10), float32(14)
+	)
+	fw, fh := float32(p.w), float32(p.h)
+	cx, cy := fw*0.5, fh*0.5
+	inv := 1 / (cx*cx + cy*cy)
+	i := 0
+	for y := 0; y < p.h; y++ {
+		dy := float32(y) + 0.5 - cy
+		for x := 0; x < p.w; x++ {
+			dx := float32(x) + 0.5 - cx
+			d2 := (dx*dx + dy*dy) * inv
+			if d2 > 1 {
+				d2 = 1
+			}
+
+			s := 1 - d2
+			v := s * s * (3 - 2*s)
+			p.bgBuf[i] = byte(eR + (cR-eR)*v)
+			p.bgBuf[i+1] = byte(eG + (cG-eG)*v)
+			p.bgBuf[i+2] = byte(eB + (cB-eB)*v)
+			p.bgBuf[i+3] = 255
+			i += 4
+		}
+	}
+}
+
+func (p *Pipeline) SetConfig(c RenderConfig) { p.cfg = c }
+
+func (p *Pipeline) SetTexture(t Texture) { p.tex = t }
+
+func (p *Pipeline) ResetTexture() { p.tex = defaultTexture() }
+
+func defaultTexture() Texture {
+	return Checker{A: RGBA{40, 40, 48, 255}, B: RGBA{220, 220, 230, 255}, Scale: 8}
+}
+
+func (p *Pipeline) Pixels() []byte { return p.pixels }
+
+func (p *Pipeline) Size() (w, h int) { return p.w, p.h }
+
+func (p *Pipeline) Render(msh *model.Mesh, cam Camera) {
+	p.clear()
+	p.zbuf.Clear()
+	if msh == nil {
+		return
+	}
+
+	view := cam.View()
+	vp := cam.Projection().Mul(view)
+
+	p.projectVerts(msh, vp, view)
+
+	if p.cfg.Crystal {
+		p.renderCrystal(msh, view)
+		return
+	}
+
+	p.cullSign = 0
+	if msh.CullSafe {
+		if msh.WindingOutward {
+			p.cullSign = -1
+		} else {
+			p.cullSign = 1
+		}
+	}
+
+	toLight := cam.LightDir().Normalize().Neg()
+	wireOnly := p.cfg.Wireframe && !p.cfg.Texture && !p.cfg.Lighting
+	for ti := range msh.Tris {
+		t := &msh.Tris[ti]
+		a, b, c := &p.vs[t.V[0]], &p.vs[t.V[1]], &p.vs[t.V[2]]
+		if !a.ok || !b.ok || !c.ok {
+			continue
+		}
+		if !wireOnly {
+			p.rasterizeTriangle(msh, t, a, b, c, toLight)
+		}
+		if p.cfg.Wireframe {
+			p.wireTriangle(a, b, c)
+		}
+	}
+}
+
+func (p *Pipeline) projectVerts(msh *model.Mesh, vp, view m.Mat4) {
+	if cap(p.vs) < len(msh.Verts) {
+		p.vs = make([]vert, len(msh.Verts))
+	} else {
+		p.vs = p.vs[:len(msh.Verts)]
+	}
+	fw, fh := float32(p.w), float32(p.h)
+	crystal := p.cfg.Crystal
+	for i := range msh.Verts {
+		clip := vp.MulVec4(m.V4(msh.Verts[i], 1))
+		v := &p.vs[i]
+		if clip.W <= nearEps {
+			v.ok = false
+			continue
+		}
+		inv := 1 / clip.W
+		v.sx = (clip.X*inv*0.5 + 0.5) * fw
+		v.sy = (1 - (clip.Y*inv*0.5 + 0.5)) * fh
+		v.sz = clip.Z * inv
+		v.invW = inv
+		v.n = msh.VertNormals[i]
+		if crystal {
+			vp4 := view.MulVec4(m.V4(msh.Verts[i], 1))
+			v.vx, v.vy, v.vz = vp4.X, vp4.Y, vp4.Z
+			v.ox, v.oy, v.oz = msh.Verts[i].X, msh.Verts[i].Y, msh.Verts[i].Z
+		}
+		v.ok = true
+	}
+}
+
+func (p *Pipeline) clear() {
+
+	copy(p.pixels, p.bgBuf)
+}
