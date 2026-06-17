@@ -22,6 +22,7 @@ var (
 	pipe *render.Pipeline
 	cam  *camera.Camera
 	mesh *model.Mesh
+	lods *model.LODChain
 
 	jsPix     js.Value
 	jsClamped js.Value
@@ -60,6 +61,7 @@ func loadModel(_ js.Value, args []js.Value) any {
 		return err.Error()
 	}
 	mesh = msh
+	lods = msh.BuildLODChain()
 	pipe.ResetTexture()
 	frameCamera(msh)
 	cam.Snap()
@@ -68,6 +70,7 @@ func loadModel(_ js.Value, args []js.Value) any {
 
 func clearModel(_ js.Value, _ []js.Value) any {
 	mesh = nil
+	lods = nil
 	return nil
 }
 
@@ -158,7 +161,7 @@ func inputCamera(_ js.Value, args []js.Value) any {
 
 func tanf(v float32) float32 { return float32(stdmath.Tan(float64(v))) }
 
-func renderFrame(_ js.Value, _ []js.Value) any {
+func renderFrame(_ js.Value, args []js.Value) any {
 	now := time.Now()
 	dt := float32(now.Sub(lastFrame).Seconds())
 	lastFrame = now
@@ -166,7 +169,14 @@ func renderFrame(_ js.Value, _ []js.Value) any {
 		dt = 0.1
 	}
 	cam.Update(dt)
-	pipe.Render(mesh, cam)
+
+	interacting := len(args) >= 1 && args[0].Truthy()
+	msh := mesh
+	if lods != nil {
+		_, h := pipe.Size()
+		msh = lods.Select(cam.Dist, float32(h), fovY, interacting)
+	}
+	pipe.Render(msh, cam)
 	return nil
 }
 

@@ -254,6 +254,10 @@
   const sheetHandle = document.getElementById('sheetHandle');
 
   const MAX_DIM = 1024;
+  const INTERACT_SCALE = 0.5;
+  const INTERACT_HOLD = 250;
+  let interactUntil = 0;
+  let lowRes = false;
   let bufScale = 1;
   let orbitDX = 0, orbitDY = 0;
   let panDX = 0, panDY = 0;
@@ -271,10 +275,13 @@
   function applyResize() {
     const cw = Math.max(1, stage.clientWidth), ch = Math.max(1, stage.clientHeight);
     bufScale = Math.min(1, MAX_DIM / Math.max(cw, ch));
-    canvas.width  = Math.max(1, Math.round(cw * bufScale));
-    canvas.height = Math.max(1, Math.round(ch * bufScale));
+    const rs = lowRes ? INTERACT_SCALE : 1;
+    canvas.width  = Math.max(1, Math.round(cw * bufScale * rs));
+    canvas.height = Math.max(1, Math.round(ch * bufScale * rs));
     goResizeBuffer(canvas.width, canvas.height);
   }
+
+  function bumpInteract() { interactUntil = performance.now() + INTERACT_HOLD; }
 
   let shadingMode = 'material';
   let currentHasTex = false;
@@ -303,6 +310,8 @@
   }
 
   function frame(t) {
+    const wantLow = pointers.size > 0 || t < interactUntil;
+    if (wantLow !== lowRes) { lowRes = wantLow; pendingResize = true; }
     if (pendingResize) { applyResize(); pendingResize = false; }
 
     goInputCamera(orbitDX * bufScale, orbitDY * bufScale,
@@ -310,7 +319,7 @@
     orbitDX = orbitDY = panDX = panDY = 0;
     zoomAcc = 1;
 
-    goRenderFrame();
+    goRenderFrame(wantLow);
     const buf = goGetPixelBuffer();
     ctx.putImageData(new ImageData(buf, canvas.width, canvas.height), 0, 0);
 
@@ -382,12 +391,14 @@
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, button: e.button });
+    bumpInteract();
     e.preventDefault();
   });
 
   canvas.addEventListener('pointermove', e => {
     const p = pointers.get(e.pointerId);
     if (!p) return;
+    bumpInteract();
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       const oldDist = Math.hypot(a.x - b.x, a.y - b.y);
@@ -411,6 +422,7 @@
 
   canvas.addEventListener('wheel', e => {
     zoomAcc *= Math.exp(e.deltaY * 0.0012);
+    bumpInteract();
     e.preventDefault();
   }, { passive: false });
 

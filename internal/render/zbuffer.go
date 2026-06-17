@@ -24,7 +24,11 @@ func (z *ZBuffer) Resize(w, h int) {
 }
 
 func (z *ZBuffer) Clear() {
-	for i := range z.data {
-		z.data[i] = math.MaxFloat32
+	if len(z.data) == 0 {
+		return
+	}
+	z.data[0] = math.MaxFloat32
+	for i := 1; i < len(z.data); i *= 2 {
+		copy(z.data[i:], z.data[:i])
 	}
 }

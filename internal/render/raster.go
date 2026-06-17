@@ -58,17 +58,33 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 	perspTex := useTex && bigTri
 
 	var uvA, uvB, uvC m.Vec2
+	var texPix []byte
+	var texW, texH int
+	var texFW, texFH float32
+	hasImg := false
 	if useTex {
 		uvA, uvB, uvC = msh.UVs[t.UV[0]], msh.UVs[t.UV[1]], msh.UVs[t.UV[2]]
+		if it, ok := p.tex.(*ImageTexture); ok && it.W > 0 && it.H > 0 {
+			texPix = it.Pix
+			texW, texH = it.W, it.H
+			texFW, texFH = float32(it.W), float32(it.H)
+			hasImg = true
+		}
 	}
 
 	spec := useLight && !p.cfg.Flat
+	lit := useLight
+	baseCol := p.flat
 	var iA, iB, iC float32
 	var dA, dB, dC float32
 	if useLight {
 		if p.cfg.Flat {
 			fi := vertLight(msh.FaceNormals[ti], toLight)
 			iA, iB, iC = fi, fi, fi
+			if !useTex {
+				baseCol = p.flat.scale(fi)
+				lit = false
+			}
 		} else {
 			iA, dA = p.studioVert(a.n)
 			iB, dB = p.studioVert(b.n)
@@ -114,7 +130,7 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 				continue
 			}
 
-			col := p.flat
+			col := baseCol
 			if useTex {
 				var uu, vv float32
 				if perspTex {
@@ -125,12 +141,31 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 					uu = w0*uvA.X + w1*uvB.X + w2*uvC.X
 					vv = w0*uvA.Y + w1*uvB.Y + w2*uvC.Y
 				}
-				col = p.tex.ColorAt(uu, vv)
+				if hasImg {
+					uu -= float32(ffloor(uu))
+					vv -= float32(ffloor(vv))
+					tx := int(uu * texFW)
+					ty := int((1 - vv) * texFH)
+					if tx >= texW {
+						tx = texW - 1
+					}
+					if ty >= texH {
+						ty = texH - 1
+					}
+					to := (ty*texW + tx) * 4
+					_ = texPix[to+3]
+					col = RGBA{texPix[to], texPix[to+1], texPix[to+2], texPix[to+3]}
+				} else {
+					col = p.tex.ColorAt(uu, vv)
+				}
 			}
 			p.zbuf.data[idx] = depth
 			o := idx * 4
-			if useLight {
-				col = col.scale(w0*iA + w1*iB + w2*iC)
+			if lit {
+				li := w0*iA + w1*iB + w2*iC
+				rf := float32(col.R) * li
+				gf := float32(col.G) * li
+				bf := float32(col.B) * li
 				if spec {
 					if d := w0*dA + w1*dB + w2*dC; d > 0 {
 						d2 := d * d
@@ -138,13 +173,16 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 						d8 := d4 * d4
 						d16 := d8 * d8
 						s := studioSpec * (d16 * d16 * d16) * 255
-						p.pixels[o] = satU8(float32(col.R) + s)
-						p.pixels[o+1] = satU8(float32(col.G) + s)
-						p.pixels[o+2] = satU8(float32(col.B) + s)
-						p.pixels[o+3] = col.A
-						continue
+						rf += s
+						gf += s
+						bf += s
 					}
 				}
+				p.pixels[o] = satU8(rf)
+				p.pixels[o+1] = satU8(gf)
+				p.pixels[o+2] = satU8(bf)
+				p.pixels[o+3] = col.A
+				continue
 			}
 			p.pixels[o] = col.R
 			p.pixels[o+1] = col.G

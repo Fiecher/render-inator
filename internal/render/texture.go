@@ -1,9 +1,15 @@
 package render
 
-import "math"
-
 type Texture interface {
 	ColorAt(u, v float32) RGBA
+}
+
+func ffloor(f float32) int {
+	i := int(f)
+	if float32(i) > f {
+		i--
+	}
+	return i
 }
 
 type Checker struct {
@@ -12,8 +18,8 @@ type Checker struct {
 }
 
 func (c Checker) ColorAt(u, v float32) RGBA {
-	iu := int(math.Floor(float64(u * c.Scale)))
-	iv := int(math.Floor(float64(v * c.Scale)))
+	iu := ffloor(u * c.Scale)
+	iv := ffloor(v * c.Scale)
 	if (iu+iv)&1 == 0 {
 		return c.A
 	}
@@ -29,8 +35,8 @@ func (t *ImageTexture) ColorAt(u, v float32) RGBA {
 	if t.W == 0 || t.H == 0 {
 		return RGBA{255, 0, 255, 255}
 	}
-	u -= float32(math.Floor(float64(u)))
-	v -= float32(math.Floor(float64(v)))
+	u -= float32(ffloor(u))
+	v -= float32(ffloor(v))
 	x := int(u * float32(t.W))
 	y := int((1 - v) * float32(t.H))
 	if x >= t.W {
