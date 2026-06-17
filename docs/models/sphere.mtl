@@ -1,4 +1,0 @@
-# Material for the default sphere (generated demo asset).
-newmtl mat
-Kd 1.000 1.000 1.000
-map_Kd sphere.png

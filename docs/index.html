@@ -113,6 +113,28 @@
   .add-btn svg { width: 16px; height: 16px; display: block; }
   .add-btn:hover { color: var(--accent); border-color: var(--accent); background: rgba(255, 64, 0, .08); }
   .add-btn:active { transform: scale(.92); }
+  .legend-actions { display: flex; gap: 6px; }
+  .modal {
+    position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+    background: rgba(11, 10, 9, .72); backdrop-filter: blur(2px);
+  }
+  .modal[hidden] { display: none; }
+  .modal-card {
+    width: min(360px, 86vw); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 22px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, .6);
+  }
+  .modal-title {
+    margin: 0 0 10px; font-family: var(--font-display); font-size: 22px;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--fg);
+  }
+  .modal-text { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
+  .modal-actions { display: flex; gap: 10px; }
+  .modal-actions button { margin-top: 0; flex: 1; width: auto; }
+  .btn-ghost { border-color: var(--line); color: var(--fg); }
+  .btn-ghost:hover { background: rgba(223, 225, 215, .08); color: var(--fg); }
+  .btn-danger { border-color: var(--accent); color: var(--accent); }
+  .btn-danger:hover { background: var(--accent); color: var(--bg); }
   button {
     width: 100%; margin-top: 12px; padding: 9px 12px;
     font-family: var(--font-display); font-size: 16px;
@@ -226,12 +248,19 @@
 
     <fieldset>
       <legend class="legend-row">
-        <span>Model</span>
-        <button id="addModel" class="add-btn" type="button" title="Add model" aria-label="Add model">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M12 5v14M5 12h14"/>
-          </svg>
-        </button>
+        <span>Models</span>
+        <span class="legend-actions">
+          <button id="resetModels" class="add-btn" type="button" title="Reset all models" aria-label="Reset all models">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/>
+            </svg>
+          </button>
+          <button id="addModel" class="add-btn" type="button" title="Add model" aria-label="Add model">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </button>
+        </span>
       </legend>
       <input id="file" type="file" accept=".obj,.mtl,.png,.jpg,.jpeg" multiple hidden>
       <ul id="models" class="models" hidden></ul>
@@ -239,6 +268,17 @@
 
     <div id="status" class="muted">Loading WASM…</div>
   </aside>
+
+  <div id="resetModal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="resetModalTitle">
+      <h2 id="resetModalTitle" class="modal-title">Reset all models?</h2>
+      <p class="modal-text">All loaded models will be removed and must be re-imported. The default model will be restored.</p>
+      <div class="modal-actions">
+        <button id="resetCancel" class="btn-ghost" type="button">Cancel</button>
+        <button id="resetConfirm" class="btn-danger" type="button">Reset</button>
+      </div>
+    </div>
+  </div>
 
 <script src="wasm_exec.js"></script>
 <script>
@@ -253,12 +293,19 @@
   const shadeBtns = [...document.querySelectorAll('#shading .shade')];
   const sheetHandle = document.getElementById('sheetHandle');
 
-  const MAX_DIM = 1024;
-  const INTERACT_SCALE = 0.5;
+  const MAX_DIM = 2048;
   const INTERACT_HOLD = 250;
   let interactUntil = 0;
-  let lowRes = false;
   let bufScale = 1;
+
+  const SCALE_STEPS = [1, 0.75, 0.55, 0.4];
+  const DT_DROP = 24, DT_RAISE = 18.5;
+  const EMA_ALPHA = 0.12;
+  const SETTLE_MS = 300, RAISE_HOLD = 900;
+  let scaleIdx = 0, appliedScaleIdx = 0;
+  let emaDt = 16.6, lastT = performance.now();
+  let lastChangeT = 0, raiseSince = 0, resizeCooldown = 0;
+
   let orbitDX = 0, orbitDY = 0;
   let panDX = 0, panDY = 0;
   let zoomAcc = 1;
@@ -275,10 +322,32 @@
   function applyResize() {
     const cw = Math.max(1, stage.clientWidth), ch = Math.max(1, stage.clientHeight);
     bufScale = Math.min(1, MAX_DIM / Math.max(cw, ch));
-    const rs = lowRes ? INTERACT_SCALE : 1;
-    canvas.width  = Math.max(1, Math.round(cw * bufScale * rs));
-    canvas.height = Math.max(1, Math.round(ch * bufScale * rs));
-    goResizeBuffer(canvas.width, canvas.height);
+    const rs = SCALE_STEPS[scaleIdx];
+    const nw = Math.max(1, Math.round(cw * bufScale * rs));
+    const nh = Math.max(1, Math.round(ch * bufScale * rs));
+    appliedScaleIdx = scaleIdx;
+    if (nw === canvas.width && nh === canvas.height) return;
+    canvas.width = nw;
+    canvas.height = nh;
+    goResizeBuffer(nw, nh);
+    resizeCooldown = 2;
+  }
+
+  function runScaleController(now, interacting) {
+    if (now - lastChangeT < SETTLE_MS) return;
+    if (!interacting) {
+      if (scaleIdx > 0) { scaleIdx--; lastChangeT = now; }
+      raiseSince = now;
+      return;
+    }
+    if (emaDt > DT_DROP) {
+      if (scaleIdx < SCALE_STEPS.length - 1) { scaleIdx++; lastChangeT = now; }
+      raiseSince = now;
+    } else if (emaDt < DT_RAISE) {
+      if (now - raiseSince > RAISE_HOLD && scaleIdx > 0) { scaleIdx--; lastChangeT = now; raiseSince = now; }
+    } else {
+      raiseSince = now;
+    }
   }
 
   function bumpInteract() { interactUntil = performance.now() + INTERACT_HOLD; }
@@ -310,8 +379,21 @@
   }
 
   function frame(t) {
-    const wantLow = pointers.size > 0 || t < interactUntil;
-    if (wantLow !== lowRes) { lowRes = wantLow; pendingResize = true; }
+    let dt = t - lastT;
+    lastT = t;
+    if (dt > 100) dt = 100;
+    if (resizeCooldown > 0) resizeCooldown--;
+    else emaDt += (dt - emaDt) * EMA_ALPHA;
+
+    if (shadingMode === 'wireframe') {
+      scaleIdx = 0;
+    } else {
+      const interacting = pointers.size > 0 || t < interactUntil;
+      runScaleController(t, interacting);
+    }
+    const wantLow = scaleIdx >= 2;
+
+    if (scaleIdx !== appliedScaleIdx) pendingResize = true;
     if (pendingResize) { applyResize(); pendingResize = false; }
 
     goInputCamera(orbitDX * bufScale, orbitDY * bufScale,
@@ -431,7 +513,10 @@
   document.getElementById('reset').onclick = () => goResetCamera();
   canvas.addEventListener('dblclick', () => goResetCamera());
 
-  shadeBtns.forEach(b => b.onclick = () => setShadingMode(b.dataset.mode));
+  shadeBtns.forEach(b => b.onclick = () => {
+    if (b.dataset.mode === 'wireframe' && shadingMode === 'wireframe') goReplayWireframe();
+    else setShadingMode(b.dataset.mode);
+  });
   document.getElementById('addModel').onclick = () => fileEl.click();
   sheetHandle.onclick = () => document.body.classList.toggle('panel-collapsed');
 
@@ -484,6 +569,7 @@
   const dbAdd    = rec => dbReq('readwrite', s => s.add(rec));
   const dbAll    = ()  => dbReq('readonly',  s => s.getAll());
   const dbDelete = id  => dbReq('readwrite', s => s.delete(id));
+  const dbClear  = ()  => dbReq('readwrite', s => s.clear());
 
   function beginWipe() {
     if (transition || currentId === null || canvas.width <= 1) return;
@@ -537,7 +623,7 @@
 
   async function removeModel(id) {
     if (typeof id === 'number') { try { await dbDelete(id); } catch (e) {} }
-    if (id === 'sphere') { try { localStorage.setItem('sphereDeleted', '1'); } catch (e) {} }
+    if (id === 'teapot') { try { localStorage.setItem('teapotDeleted', '1'); } catch (e) {} }
     const wasCurrent = currentId === id;
     models = models.filter(m => m.id !== id);
     if (models.length === 0) {
@@ -596,20 +682,47 @@
     fileEl.value = '';
   };
 
+  async function defaultTeapotRecord() {
+    const objText = await (await fetch('models/teapot.obj')).text();
+    const tex = await extractTexture(objText, async n => {
+      const r = await fetch('models/' + n);
+      return r.ok ? r.blob() : null;
+    });
+    return { id: 'teapot', name: 'teapot (default)', objText, tex };
+  }
+
+  async function resetAllModels() {
+    try { await dbClear(); } catch (e) {}
+    try { localStorage.removeItem('teapotDeleted'); } catch (e) {}
+    try { localStorage.removeItem('lastModel'); } catch (e) {}
+    models = [];
+    currentId = null;
+    try { models.push(await defaultTeapotRecord()); } catch (e) {}
+    if (models.length) {
+      selectModel(models[0].id);
+    } else {
+      goClearModel();
+      renderModelList();
+      setStatus('Ready. Load an OBJ to begin.');
+    }
+  }
+
+  const resetModal = document.getElementById('resetModal');
+  const openResetModal  = () => { resetModal.hidden = false; };
+  const closeResetModal = () => { resetModal.hidden = true; };
+  document.getElementById('resetModels').onclick = openResetModal;
+  document.getElementById('resetCancel').onclick = closeResetModal;
+  resetModal.addEventListener('click', e => { if (e.target === resetModal) closeResetModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !resetModal.hidden) closeResetModal(); });
+  document.getElementById('resetConfirm').onclick = async () => { closeResetModal(); await resetAllModels(); };
+
   const go = new Go();
   window.onWasmReady = async () => {
     setShadingMode(shadingMode);
-    let sphereDeleted = false;
-    try { sphereDeleted = !!localStorage.getItem('sphereDeleted'); } catch (e) {}
-    if (!sphereDeleted) {
-      try {
-        const objText = await (await fetch('models/sphere.obj')).text();
-        const tex = await extractTexture(objText, async n => {
-          const r = await fetch('models/' + n);
-          return r.ok ? r.blob() : null;
-        });
-        models.push({ id: 'sphere', name: 'sphere (default)', objText, tex });
-      } catch (e) {}
+    let teapotDeleted = false;
+    try { teapotDeleted = !!localStorage.getItem('teapotDeleted'); } catch (e) {}
+    if (!teapotDeleted) {
+      try { models.push(await defaultTeapotRecord()); } catch (e) {}
     }
     try { for (const rec of await dbAll()) models.push(rec); }
     catch (e) { console.warn('model store:', e); }

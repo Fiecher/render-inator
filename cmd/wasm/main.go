@@ -40,6 +40,7 @@ func main() {
 	g.Set("goClearModel", js.FuncOf(clearModel))
 	g.Set("goLoadTexture", js.FuncOf(loadTexture))
 	g.Set("goSetRenderConfig", js.FuncOf(setRenderConfig))
+	g.Set("goReplayWireframe", js.FuncOf(replayWireframe))
 	g.Set("goResizeBuffer", js.FuncOf(resizeBuffer))
 	g.Set("goInputCamera", js.FuncOf(inputCamera))
 	g.Set("goResetCamera", js.FuncOf(resetCamera))
@@ -93,7 +94,7 @@ func loadTexture(_ js.Value, args []js.Value) any {
 	if n := js.CopyBytesToGo(pix, args[0]); n != len(pix) {
 		return "loadTexture: rgba byte count mismatch"
 	}
-	pipe.SetTexture(&render.ImageTexture{Pix: pix, W: w, H: h})
+	pipe.SetTexture(render.NewImageTexture(pix, w, h))
 	return nil
 }
 
@@ -121,6 +122,11 @@ func setRenderConfig(_ js.Value, args []js.Value) any {
 		Crystal:   crystal,
 		Flat:      flat,
 	})
+	return nil
+}
+
+func replayWireframe(_ js.Value, _ []js.Value) any {
+	pipe.ReplayWireframe()
 	return nil
 }
 
@@ -172,7 +178,7 @@ func renderFrame(_ js.Value, args []js.Value) any {
 
 	interacting := len(args) >= 1 && args[0].Truthy()
 	msh := mesh
-	if lods != nil {
+	if lods != nil && !pipe.Config().Wireframe {
 		_, h := pipe.Size()
 		msh = lods.Select(cam.Dist, float32(h), fovY, interacting)
 	}
