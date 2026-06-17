@@ -56,17 +56,16 @@ func buildImageTex(size int) *ImageTexture {
 			pix[o+3] = 255
 		}
 	}
-	return &ImageTexture{Pix: pix, W: size, H: size}
+	return NewImageTexture(pix, size, size)
 }
 
-func benchRender(b *testing.B, cfg RenderConfig) {
-	msh := buildSphere(96, 96)
+func benchRenderMesh(b *testing.B, cfg RenderConfig, msh *model.Mesh, dist float32, texSize int) {
 	p := NewPipeline(benchW, benchH)
 	p.SetConfig(cfg)
 	if cfg.Texture {
-		p.SetTexture(buildImageTex(256))
+		p.SetTexture(buildImageTex(texSize))
 	}
-	cam := camera.New(m.Vec3{}, 2.6, 60*stdmath.Pi/180, float32(benchW)/float32(benchH))
+	cam := camera.New(m.Vec3{}, dist, 60*stdmath.Pi/180, float32(benchW)/float32(benchH))
 	cam.Snap()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -75,9 +74,41 @@ func benchRender(b *testing.B, cfg RenderConfig) {
 	}
 }
 
+func benchRenderCfg(b *testing.B, cfg RenderConfig, dist float32, texSize int) {
+	msh := buildSphere(96, 96)
+	p := NewPipeline(benchW, benchH)
+	p.SetConfig(cfg)
+	if cfg.Texture {
+		p.SetTexture(buildImageTex(texSize))
+	}
+	cam := camera.New(m.Vec3{}, dist, 60*stdmath.Pi/180, float32(benchW)/float32(benchH))
+	cam.Snap()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Render(msh, cam)
+	}
+}
+
+func benchRender(b *testing.B, cfg RenderConfig) { benchRenderCfg(b, cfg, 2.6, 1024) }
+
 func BenchmarkMaterial(b *testing.B)    { benchRender(b, RenderConfig{Lighting: true}) }
 func BenchmarkMaterialTex(b *testing.B) { benchRender(b, RenderConfig{Lighting: true, Texture: true}) }
 func BenchmarkSolid(b *testing.B)       { benchRender(b, RenderConfig{Lighting: true, Flat: true}) }
 func BenchmarkSolidTex(b *testing.B) {
 	benchRender(b, RenderConfig{Lighting: true, Texture: true, Flat: true})
+}
+
+func BenchmarkMaterialDistant(b *testing.B) {
+	benchRenderCfg(b, RenderConfig{Lighting: true}, 9, 1024)
+}
+func BenchmarkMaterialTexDistant(b *testing.B) {
+	benchRenderCfg(b, RenderConfig{Lighting: true, Texture: true}, 9, 2048)
+}
+
+func BenchmarkMaterialDense(b *testing.B) {
+	benchRenderMesh(b, RenderConfig{Lighting: true}, buildSphere(500, 500), 2.6, 1024)
+}
+func BenchmarkMaterialTexDense(b *testing.B) {
+	benchRenderMesh(b, RenderConfig{Lighting: true, Texture: true}, buildSphere(500, 500), 2.6, 1024)
 }

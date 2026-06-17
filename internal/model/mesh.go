@@ -5,6 +5,7 @@ import m "render-inator/internal/math"
 type Tri struct {
 	V  [3]int
 	UV [3]int
+	N  [3]int
 }
 
 type Mesh struct {
@@ -15,6 +16,8 @@ type Mesh struct {
 	FaceNormals []m.Vec3
 
 	VertNormals []m.Vec3
+
+	Normals []m.Vec3
 
 	CullSafe bool
 

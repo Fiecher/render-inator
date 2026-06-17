@@ -1,6 +1,8 @@
 package render
 
 import (
+	"time"
+
 	m "render-inator/internal/math"
 	"render-inator/internal/model"
 )
@@ -54,6 +56,10 @@ type Pipeline struct {
 	stHalf m.Vec3
 	stUp   m.Vec3
 	stCam  m.Vec3
+
+	reveal      wireReveal
+	prevWire    bool
+	forceReveal bool
 }
 
 func NewPipeline(w, h int) *Pipeline {
@@ -125,6 +131,10 @@ func (p *Pipeline) buildBackground() {
 
 func (p *Pipeline) SetConfig(c RenderConfig) { p.cfg = c }
 
+func (p *Pipeline) ReplayWireframe() { p.forceReveal = true }
+
+func (p *Pipeline) Config() RenderConfig { return p.cfg }
+
 func (p *Pipeline) SetTexture(t Texture) { p.tex = t }
 
 func (p *Pipeline) ResetTexture() { p.tex = defaultTexture() }
@@ -141,6 +151,7 @@ func (p *Pipeline) Render(msh *model.Mesh, cam Camera) {
 	p.clear()
 	p.zbuf.Clear()
 	if msh == nil {
+		p.prevWire = false
 		return
 	}
 
@@ -151,6 +162,7 @@ func (p *Pipeline) Render(msh *model.Mesh, cam Camera) {
 
 	if p.cfg.Crystal {
 		p.renderCrystal(msh, view)
+		p.prevWire = false
 		return
 	}
 
@@ -165,19 +177,36 @@ func (p *Pipeline) Render(msh *model.Mesh, cam Camera) {
 
 	toLight := cam.LightDir().Normalize().Neg()
 	p.setupStudio(view)
-	wireOnly := p.cfg.Wireframe && !p.cfg.Texture && !p.cfg.Lighting
-	for ti := range msh.Tris {
-		t := &msh.Tris[ti]
-		a, b, c := &p.vs[t.V[0]], &p.vs[t.V[1]], &p.vs[t.V[2]]
-		if !a.ok || !b.ok || !c.ok {
-			continue
+
+	wire := p.cfg.Wireframe
+	animating := false
+	if wire {
+		if !p.prevWire || p.reveal.builtFor != msh || p.forceReveal {
+			p.reveal.begin(msh)
 		}
-		if !wireOnly {
-			p.rasterizeTriangle(msh, ti, t, a, b, c, toLight)
+		animating = p.reveal.active
+	}
+	p.forceReveal = false
+	p.prevWire = wire
+
+	wireOnly := wire && !p.cfg.Texture && !p.cfg.Lighting
+	if !(wireOnly && animating) {
+		for ti := range msh.Tris {
+			t := &msh.Tris[ti]
+			a, b, c := &p.vs[t.V[0]], &p.vs[t.V[1]], &p.vs[t.V[2]]
+			if !a.ok || !b.ok || !c.ok {
+				continue
+			}
+			if !wireOnly {
+				p.rasterizeTriangle(msh, ti, t, a, b, c, toLight)
+			}
+			if wire && !animating {
+				p.wireTriangle(a, b, c)
+			}
 		}
-		if p.cfg.Wireframe {
-			p.wireTriangle(a, b, c)
-		}
+	}
+	if animating {
+		p.reveal.draw(p, time.Now())
 	}
 }
 

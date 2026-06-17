@@ -65,9 +65,16 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 	if useTex {
 		uvA, uvB, uvC = msh.UVs[t.UV[0]], msh.UVs[t.UV[1]], msh.UVs[t.UV[2]]
 		if it, ok := p.tex.(*ImageTexture); ok && it.W > 0 && it.H > 0 {
-			texPix = it.Pix
-			texW, texH = it.W, it.H
-			texFW, texFH = float32(it.W), float32(it.H)
+			texelArea := (uvB.X-uvA.X)*(uvC.Y-uvA.Y) - (uvB.Y-uvA.Y)*(uvC.X-uvA.X)
+			if texelArea < 0 {
+				texelArea = -texelArea
+			}
+			texelArea *= float32(it.W) * float32(it.H)
+			scrArea := area
+			if scrArea < 0 {
+				scrArea = -scrArea
+			}
+			texPix, texW, texH, texFW, texFH = it.mipFor(texelArea, scrArea)
 			hasImg = true
 		}
 	}
@@ -86,9 +93,15 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 				lit = false
 			}
 		} else {
-			iA, dA = p.studioVert(a.n)
-			iB, dB = p.studioVert(b.n)
-			iC, dC = p.studioVert(c.n)
+			nA, nB, nC := a.n, b.n, c.n
+			if len(msh.Normals) > 0 && t.N[0] >= 0 {
+				nA = msh.Normals[t.N[0]]
+				nB = msh.Normals[t.N[1]]
+				nC = msh.Normals[t.N[2]]
+			}
+			iA, dA = p.studioVert(nA)
+			iB, dB = p.studioVert(nB)
+			iC, dC = p.studioVert(nC)
 		}
 	}
 

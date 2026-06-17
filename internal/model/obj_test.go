@@ -156,3 +156,97 @@ func TestParseOBJErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestParseOBJCubeFlatShading(t *testing.T) {
+
+	const cube = `
+v -1 -1 -1
+v  1 -1 -1
+v  1  1 -1
+v -1  1 -1
+v -1 -1  1
+v  1 -1  1
+v  1  1  1
+v -1  1  1
+f 1 2 3 4
+f 5 6 7 8
+f 1 5 8 4
+f 2 6 7 3
+f 4 3 7 8
+f 1 2 6 5
+`
+	msh, err := ParseOBJ([]byte(cube))
+	if err != nil {
+		t.Fatalf("ParseOBJ: %v", err)
+	}
+
+	if len(msh.Normals) < 3 {
+		t.Errorf("shading normals = %d, want >= 3 (faces must not collapse to one smooth normal)", len(msh.Normals))
+	}
+
+	for ti, tri := range msh.Tris {
+		if tri.N[0] != tri.N[1] || tri.N[1] != tri.N[2] {
+			t.Errorf("tri %d corners not coplanar: N=%v", ti, tri.N)
+		}
+		for k := 0; k < 3; k++ {
+			n := msh.Normals[tri.N[k]]
+			if d := float64(n.Dot(msh.FaceNormals[ti])); d < 0.999 {
+				t.Errorf("tri %d corner %d not flat: dot(face)=%v", ti, k, d)
+			}
+			if l := math.Sqrt(float64(n.Dot(n))); math.Abs(l-1) > 1e-4 {
+				t.Errorf("shading normal %v not unit: len=%v", n, l)
+			}
+		}
+	}
+}
+
+func TestParseOBJFileNormals(t *testing.T) {
+
+	const data = `
+v 0 0 0
+v 1 0 0
+v 0 1 0
+vn 0 0 2
+f 1//1 2//1 3//1
+`
+	msh, err := ParseOBJ([]byte(data))
+	if err != nil {
+		t.Fatalf("ParseOBJ: %v", err)
+	}
+	if len(msh.Normals) != 1 {
+		t.Fatalf("normals = %d, want 1 (from file vn)", len(msh.Normals))
+	}
+	n := msh.Normals[0]
+	if math.Abs(float64(n.X)) > 1e-6 || math.Abs(float64(n.Y)) > 1e-6 || math.Abs(float64(n.Z-1)) > 1e-6 {
+		t.Errorf("file normal not normalized to +Z: %v", n)
+	}
+	if msh.Tris[0].N != [3]int{0, 0, 0} {
+		t.Errorf("tri N = %v, want [0 0 0]", msh.Tris[0].N)
+	}
+}
+
+func TestParseOBJWeldsSeamNormals(t *testing.T) {
+
+	const data = `
+v 0 0 0
+v 2 0 0
+v 1 1 0.2
+v 0 0 0
+v 2 0 0
+v 1 -1 0.2
+f 1 2 3
+f 4 6 5
+`
+	msh, err := ParseOBJ([]byte(data))
+	if err != nil {
+		t.Fatalf("ParseOBJ: %v", err)
+	}
+	if msh.FaceNormals[0] == msh.FaceNormals[1] {
+		t.Fatalf("faces coincide; fixture cannot detect welding")
+	}
+	n0 := msh.Normals[msh.Tris[0].N[0]]
+	n1 := msh.Normals[msh.Tris[1].N[0]]
+	if d := float64(n0.Dot(n1)); d < 0.9999 {
+		t.Errorf("split-seam corners not welded: dot=%v (n0=%v n1=%v)", d, n0, n1)
+	}
+}

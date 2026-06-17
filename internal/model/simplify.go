@@ -432,6 +432,7 @@ func (d *decimator) snapshot(src *Mesh) *Mesh {
 			}
 			nt.V[k] = remap[vi]
 			nt.UV[k] = -1
+			nt.N[k] = -1
 			if hasUV && tu[k] >= 0 {
 				ui := tu[k]
 				if uvremap[ui] < 0 {

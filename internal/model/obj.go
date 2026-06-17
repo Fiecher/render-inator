@@ -13,6 +13,9 @@ import (
 func ParseOBJ(data []byte) (*Mesh, error) {
 	msh := &Mesh{}
 
+	var fileNormals []m.Vec3
+	faceHasNormals := true
+
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
@@ -53,6 +56,14 @@ func ParseOBJ(data []byte) (*Mesh, error) {
 			msh.UVs = append(msh.UVs, m.Vec2{X: u, Y: vv})
 
 		case "vn":
+			if len(fields) < 4 {
+				return nil, fmt.Errorf("obj line %d: vn needs 3 components", ln)
+			}
+			vn, err := parseVec3(fields[1:4])
+			if err != nil {
+				return nil, fmt.Errorf("obj line %d: %w", ln, err)
+			}
+			fileNormals = append(fileNormals, vn)
 
 		case "f":
 			if len(fields) < 4 {
@@ -61,18 +72,23 @@ func ParseOBJ(data []byte) (*Mesh, error) {
 			n := len(fields) - 1
 			vs := make([]int, n)
 			ts := make([]int, n)
+			ns := make([]int, n)
 			for i := 0; i < n; i++ {
-				vi, ti, err := parseRef(fields[i+1], len(msh.Verts), len(msh.UVs))
+				vi, ti, ni, err := parseRef(fields[i+1], len(msh.Verts), len(msh.UVs), len(fileNormals))
 				if err != nil {
 					return nil, fmt.Errorf("obj line %d: %w", ln, err)
 				}
-				vs[i], ts[i] = vi, ti
+				vs[i], ts[i], ns[i] = vi, ti, ni
+				if ni < 0 {
+					faceHasNormals = false
+				}
 			}
 
 			for i := 1; i < n-1; i++ {
 				msh.Tris = append(msh.Tris, Tri{
 					V:  [3]int{vs[0], vs[i], vs[i+1]},
 					UV: [3]int{ts[0], ts[i], ts[i+1]},
+					N:  [3]int{ns[0], ns[i], ns[i+1]},
 				})
 			}
 		}
@@ -88,6 +104,14 @@ func ParseOBJ(data []byte) (*Mesh, error) {
 	}
 
 	msh.ComputeNormals()
+	if len(fileNormals) > 0 && faceHasNormals {
+		msh.Normals = make([]m.Vec3, len(fileNormals))
+		for i, vn := range fileNormals {
+			msh.Normals[i] = vn.Normalize()
+		}
+	} else {
+		msh.ComputeShadingNormals()
+	}
 	msh.analyzeCulling()
 	return msh, nil
 }
@@ -116,23 +140,31 @@ func parseF(s string) (float32, error) {
 	return float32(v), nil
 }
 
-func parseRef(tok string, nv, nt int) (vIdx, tIdx int, err error) {
+func parseRef(tok string, nv, nt, nn int) (vIdx, tIdx, nIdx int, err error) {
 	parts := strings.Split(tok, "/")
 
 	vIdx, err = resolveIndex(parts[0], nv)
 	if err != nil {
-		return 0, 0, fmt.Errorf("bad face vertex %q: %w", tok, err)
+		return 0, 0, 0, fmt.Errorf("bad face vertex %q: %w", tok, err)
 	}
 
 	tIdx = -1
 	if len(parts) >= 2 && parts[1] != "" {
 		tIdx, err = resolveIndex(parts[1], nt)
 		if err != nil {
-			return 0, 0, fmt.Errorf("bad face texcoord %q: %w", tok, err)
+			return 0, 0, 0, fmt.Errorf("bad face texcoord %q: %w", tok, err)
 		}
 	}
 
-	return vIdx, tIdx, nil
+	nIdx = -1
+	if len(parts) >= 3 && parts[2] != "" {
+		nIdx, err = resolveIndex(parts[2], nn)
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("bad face normal %q: %w", tok, err)
+		}
+	}
+
+	return vIdx, tIdx, nIdx, nil
 }
 
 func resolveIndex(s string, count int) (int, error) {
