@@ -25,6 +25,16 @@ func (msh *Mesh) ComputeNormals() {
 	}
 }
 
+func (msh *Mesh) ComputeFaceNormals() {
+	msh.FaceNormals = make([]m.Vec3, len(msh.Tris))
+	for i, t := range msh.Tris {
+		a := msh.Verts[t.V[0]]
+		b := msh.Verts[t.V[1]]
+		c := msh.Verts[t.V[2]]
+		msh.FaceNormals[i] = b.Sub(a).Cross(c.Sub(a)).Normalize()
+	}
+}
+
 const creaseCos = 0.6427876
 
 func (msh *Mesh) ComputeShadingNormals() {

@@ -262,7 +262,7 @@
           </button>
         </span>
       </legend>
-      <input id="file" type="file" accept=".obj,.mtl,.png,.jpg,.jpeg" multiple hidden>
+      <input id="file" type="file" accept=".obj,.mtl,.glb,.png,.jpg,.jpeg" multiple hidden>
       <ul id="models" class="models" hidden></ul>
     </fieldset>
 
@@ -297,9 +297,13 @@
   const INTERACT_HOLD = 250;
   let interactUntil = 0;
   let bufScale = 1;
+  let needsRender = true;
+  const invalidate = () => { needsRender = true; };
 
-  const SCALE_STEPS = [1, 0.75, 0.55, 0.4];
+  const SCALE_STEPS = [1, 0.75, 0.55, 0.4, 0.3, 0.22];
   const DT_DROP = 24, DT_RAISE = 18.5;
+  const CRYSTAL_BUDGET_MS = 20;
+  let renderMs = 16;
   const EMA_ALPHA = 0.12;
   const SETTLE_MS = 300, RAISE_HOLD = 900;
   let scaleIdx = 0, appliedScaleIdx = 0;
@@ -333,10 +337,21 @@
     resizeCooldown = 2;
   }
 
+  function canRaiseToScale(idx) {
+    if (shadingMode !== 'crystal') return true;
+    const cur = SCALE_STEPS[appliedScaleIdx];
+    const predicted = renderMs * (SCALE_STEPS[idx] * SCALE_STEPS[idx]) / (cur * cur);
+    return predicted <= CRYSTAL_BUDGET_MS;
+  }
+
   function runScaleController(now, interacting) {
     if (now - lastChangeT < SETTLE_MS) return;
     if (!interacting) {
-      if (scaleIdx > 0) { scaleIdx--; lastChangeT = now; }
+      if (shadingMode === 'crystal' && renderMs > CRYSTAL_BUDGET_MS * 1.25 && scaleIdx < SCALE_STEPS.length - 1) {
+        scaleIdx++; lastChangeT = now;
+      } else if (scaleIdx > 0 && canRaiseToScale(scaleIdx - 1)) {
+        scaleIdx--; lastChangeT = now;
+      }
       raiseSince = now;
       return;
     }
@@ -344,7 +359,7 @@
       if (scaleIdx < SCALE_STEPS.length - 1) { scaleIdx++; lastChangeT = now; }
       raiseSince = now;
     } else if (emaDt < DT_RAISE) {
-      if (now - raiseSince > RAISE_HOLD && scaleIdx > 0) { scaleIdx--; lastChangeT = now; raiseSince = now; }
+      if (now - raiseSince > RAISE_HOLD && scaleIdx > 0 && canRaiseToScale(scaleIdx - 1)) { scaleIdx--; lastChangeT = now; raiseSince = now; }
     } else {
       raiseSince = now;
     }
@@ -376,6 +391,7 @@
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
     syncConfig();
+    invalidate();
   }
 
   function frame(t) {
@@ -385,24 +401,35 @@
     if (resizeCooldown > 0) resizeCooldown--;
     else emaDt += (dt - emaDt) * EMA_ALPHA;
 
+    const interacting = pointers.size > 0 || t < interactUntil;
     if (shadingMode === 'wireframe') {
       scaleIdx = 0;
     } else {
-      const interacting = pointers.size > 0 || t < interactUntil;
       runScaleController(t, interacting);
     }
     const wantLow = scaleIdx >= 2;
 
     if (scaleIdx !== appliedScaleIdx) pendingResize = true;
+    const didResize = pendingResize;
     if (pendingResize) { applyResize(); pendingResize = false; }
+
+    const camMoved = orbitDX !== 0 || orbitDY !== 0 || panDX !== 0 || panDY !== 0 || zoomAcc !== 1;
+    const live = shadingMode === 'wireframe' || !!transition;
+    if (!(needsRender || didResize || camMoved || interacting || live)) {
+      requestAnimationFrame(frame);
+      return;
+    }
+    needsRender = false;
 
     goInputCamera(orbitDX * bufScale, orbitDY * bufScale,
                   panDX * bufScale, panDY * bufScale, zoomAcc);
     orbitDX = orbitDY = panDX = panDY = 0;
     zoomAcc = 1;
 
+    const r0 = performance.now();
     goRenderFrame(wantLow);
     const buf = goGetPixelBuffer();
+    renderMs += (performance.now() - r0 - renderMs) * 0.25;
     ctx.putImageData(new ImageData(buf, canvas.width, canvas.height), 0, 0);
 
     if (transition) {
@@ -510,11 +537,11 @@
 
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-  document.getElementById('reset').onclick = () => goResetCamera();
-  canvas.addEventListener('dblclick', () => goResetCamera());
+  document.getElementById('reset').onclick = () => { goResetCamera(); invalidate(); };
+  canvas.addEventListener('dblclick', () => { goResetCamera(); invalidate(); });
 
   shadeBtns.forEach(b => b.onclick = () => {
-    if (b.dataset.mode === 'wireframe' && shadingMode === 'wireframe') goReplayWireframe();
+    if (b.dataset.mode === 'wireframe' && shadingMode === 'wireframe') { goReplayWireframe(); invalidate(); }
     else setShadingMode(b.dataset.mode);
   });
   document.getElementById('addModel').onclick = () => fileEl.click();
@@ -580,16 +607,23 @@
   }
 
   function applyModel(rec) {
-    const err = goLoadModel(rec.objText);
+    let err;
+    if (rec.glb) {
+      const bytes = rec.glb instanceof Uint8Array ? rec.glb : new Uint8Array(rec.glb);
+      err = goLoadGLB(bytes);
+    } else {
+      err = goLoadModel(rec.objText);
+    }
     if (err) { transition = null; setStatus('Error: ' + err, true); return false; }
-    currentHasTex = !!rec.tex;
-    if (rec.tex) goLoadTexture(rec.tex.rgba, rec.tex.w, rec.tex.h);
+    currentHasTex = rec.glb ? true : !!rec.tex;
+    if (!rec.glb && rec.tex) goLoadTexture(rec.tex.rgba, rec.tex.w, rec.tex.h);
     syncConfig();
     currentId = rec.id;
     try { localStorage.setItem('lastModel', String(rec.id)); } catch (e) {}
     setStatus('Loaded ' + rec.name + (rec.tex ? ' + texture.' : '.'));
     renderModelList();
     if (transition) transition.start = null;
+    invalidate();
     return true;
   }
 
@@ -605,7 +639,8 @@
     const rec = models.find(m => m.id === id);
     if (!rec) return false;
     if (id !== currentId) beginWipe();
-    if (id !== currentId && rec.objText.length > HEAVY_BYTES) {
+    const recBytes = rec.glb ? (rec.glb.byteLength || rec.glb.length) : rec.objText.length;
+    if (id !== currentId && recBytes > HEAVY_BYTES) {
       if (loadingModel) return true;
       loadingModel = true;
       document.getElementById('spinner').hidden = false;
@@ -628,6 +663,7 @@
     models = models.filter(m => m.id !== id);
     if (models.length === 0) {
       goClearModel();
+      invalidate();
       currentId = null;
       try { localStorage.removeItem('lastModel'); } catch (e) {}
       setStatus('Ready. Load an OBJ to begin.');
@@ -662,6 +698,24 @@
   fileEl.onchange = async () => {
     const files = [...fileEl.files];
     if (!files.length) return;
+    const glbFile = files.find(f => f.name.toLowerCase().endsWith('.glb'));
+    if (glbFile) {
+      setStatus('Loading ' + glbFile.name + '…');
+      const glb = new Uint8Array(await glbFile.arrayBuffer());
+      const rec = { id: 'tmp-' + Date.now(), name: glbFile.name, glb };
+      models.push(rec);
+      if (rec.id !== currentId) beginWipe();
+      if (!applyModel(rec)) { models.pop(); renderModelList(); fileEl.value = ''; return; }
+      try {
+        const dbId = await dbAdd({ name: rec.name, glb });
+        if (currentId === rec.id) currentId = dbId;
+        rec.id = dbId;
+        try { localStorage.setItem('lastModel', String(dbId)); } catch (e) {}
+        renderModelList();
+      } catch (e) {}
+      fileEl.value = '';
+      return;
+    }
     const objFile = files.find(f => f.name.toLowerCase().endsWith('.obj'));
     if (!objFile) { setStatus('Select the .obj (add its .mtl + image too).', true); return; }
     setStatus('Loading ' + objFile.name + '…');
@@ -702,6 +756,7 @@
       selectModel(models[0].id);
     } else {
       goClearModel();
+      invalidate();
       renderModelList();
       setStatus('Ready. Load an OBJ to begin.');
     }

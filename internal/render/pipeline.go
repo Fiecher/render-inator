@@ -35,6 +35,10 @@ type Pipeline struct {
 	tex  Texture
 	flat RGBA
 
+	meshMats   []model.Material
+	meshMatCol []RGBA
+	meshTex    []*ImageTexture
+
 	cullSign int8
 
 	bgBuf []byte
@@ -50,7 +54,11 @@ type Pipeline struct {
 
 	spCellX, spCellY, spCellZ int32
 	spRN                      m.Vec3
+	spCenter                  m.Vec3
+	spTw                      float32
 	spHas                     bool
+
+	crystalTime float32
 
 	stKey  m.Vec3
 	stHalf m.Vec3
@@ -138,6 +146,43 @@ func (p *Pipeline) Config() RenderConfig { return p.cfg }
 func (p *Pipeline) SetTexture(t Texture) { p.tex = t }
 
 func (p *Pipeline) ResetTexture() { p.tex = defaultTexture() }
+
+func (p *Pipeline) SetModel(msh *model.Mesh) {
+	p.meshMats = msh.Materials
+	p.meshMatCol = p.meshMatCol[:0]
+	for i := range msh.Materials {
+		p.meshMatCol = append(p.meshMatCol, linToSRGB(msh.Materials[i].BaseColor))
+	}
+	p.meshTex = p.meshTex[:0]
+	for i := range msh.Images {
+		img := &msh.Images[i]
+		if img.W > 0 && img.H > 0 && len(img.Pix) >= img.W*img.H*4 {
+			p.meshTex = append(p.meshTex, NewImageTexture(img.Pix, img.W, img.H))
+		} else {
+			p.meshTex = append(p.meshTex, nil)
+		}
+	}
+}
+
+func (p *Pipeline) triMaterial(t *model.Tri) (base RGBA, img *ImageTexture, checker Texture) {
+	if len(p.meshMats) == 0 {
+		base = p.flat
+		if it, ok := p.tex.(*ImageTexture); ok && it.W > 0 && it.H > 0 {
+			img = it
+		} else {
+			checker = p.tex
+		}
+		return
+	}
+	base = RGBA{200, 200, 205, 255}
+	if mi := t.Mat; mi >= 0 && mi < len(p.meshMatCol) {
+		base = p.meshMatCol[mi]
+		if im := p.meshMats[mi].Image; im >= 0 && im < len(p.meshTex) {
+			img = p.meshTex[im]
+		}
+	}
+	return
+}
 
 func defaultTexture() Texture {
 	return Checker{A: RGBA{40, 40, 48, 255}, B: RGBA{220, 220, 230, 255}, Scale: 8}

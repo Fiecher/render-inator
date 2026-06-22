@@ -141,10 +141,11 @@ type decimator struct {
 	ver   []int
 	vdead []bool
 
-	triV  [][3]int
-	triUV [][3]int
-	tdead []bool
-	alive int
+	triV   [][3]int
+	triUV  [][3]int
+	triMat []int
+	tdead  []bool
+	alive  int
 
 	adj [][]int
 
@@ -156,20 +157,22 @@ func newDecimator(msh *Mesh) *decimator {
 	nv := len(msh.Verts)
 	nt := len(msh.Tris)
 	d := &decimator{
-		pos:   make([]m.Vec3, nv),
-		quad:  make([]quadric, nv),
-		ver:   make([]int, nv),
-		vdead: make([]bool, nv),
-		adj:   make([][]int, nv),
-		triV:  make([][3]int, nt),
-		triUV: make([][3]int, nt),
-		tdead: make([]bool, nt),
-		alive: nt,
+		pos:    make([]m.Vec3, nv),
+		quad:   make([]quadric, nv),
+		ver:    make([]int, nv),
+		vdead:  make([]bool, nv),
+		adj:    make([][]int, nv),
+		triV:   make([][3]int, nt),
+		triUV:  make([][3]int, nt),
+		triMat: make([]int, nt),
+		tdead:  make([]bool, nt),
+		alive:  nt,
 	}
 	copy(d.pos, msh.Verts)
 	for i, t := range msh.Tris {
 		d.triV[i] = t.V
 		d.triUV[i] = t.UV
+		d.triMat[i] = t.Mat
 		for k := 0; k < 3; k++ {
 			d.adj[t.V[k]] = append(d.adj[t.V[k]], i)
 		}
@@ -424,6 +427,7 @@ func (d *decimator) snapshot(src *Mesh) *Mesh {
 		}
 		tv, tu := d.triV[ti], d.triUV[ti]
 		var nt Tri
+		nt.Mat = d.triMat[ti]
 		for k := 0; k < 3; k++ {
 			vi := tv[k]
 			if remap[vi] < 0 {
@@ -444,6 +448,8 @@ func (d *decimator) snapshot(src *Mesh) *Mesh {
 		}
 		out.Tris = append(out.Tris, nt)
 	}
+	out.Materials = src.Materials
+	out.Images = src.Images
 	out.ComputeNormals()
 	out.analyzeCulling()
 	return out

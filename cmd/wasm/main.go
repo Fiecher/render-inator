@@ -37,6 +37,7 @@ func main() {
 
 	g := js.Global()
 	g.Set("goLoadModel", js.FuncOf(loadModel))
+	g.Set("goLoadGLB", js.FuncOf(loadGLB))
 	g.Set("goClearModel", js.FuncOf(clearModel))
 	g.Set("goLoadTexture", js.FuncOf(loadTexture))
 	g.Set("goSetRenderConfig", js.FuncOf(setRenderConfig))
@@ -64,6 +65,28 @@ func loadModel(_ js.Value, args []js.Value) any {
 	mesh = msh
 	lods = msh.BuildLODChain()
 	pipe.ResetTexture()
+	pipe.SetModel(msh)
+	frameCamera(msh)
+	cam.Snap()
+	return nil
+}
+
+func loadGLB(_ js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return "loadGLB: missing data"
+	}
+	buf := make([]byte, args[0].Get("length").Int())
+	if n := js.CopyBytesToGo(buf, args[0]); n != len(buf) {
+		return "loadGLB: byte count mismatch"
+	}
+	msh, err := model.ParseGLB(buf)
+	if err != nil {
+		return err.Error()
+	}
+	mesh = msh
+	lods = msh.BuildLODChain()
+	pipe.ResetTexture()
+	pipe.SetModel(msh)
 	frameCamera(msh)
 	cam.Snap()
 	return nil

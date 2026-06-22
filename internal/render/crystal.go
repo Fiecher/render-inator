@@ -2,6 +2,7 @@ package render
 
 import (
 	stdmath "math"
+	"time"
 
 	m "render-inator/internal/math"
 	"render-inator/internal/model"
@@ -31,7 +32,10 @@ func (p *Pipeline) initCrystal() {
 
 const twoPi = 2 * stdmath.Pi
 
+var crystalEpoch = time.Now()
+
 func (p *Pipeline) renderCrystal(msh *model.Mesh, view m.Mat4) {
+	p.crystalTime = float32(time.Since(crystalEpoch).Seconds())
 	p.computeSparkleScale(msh)
 
 	p.crystalCenterView = view.MulVec4(m.V4(p.sparkleCenter, 1)).XYZ()
@@ -106,16 +110,13 @@ func (p *Pipeline) crystalPass(msh *model.Mesh, view m.Mat4, back bool) {
 			n = n.Neg()
 		}
 
-		hue := atan2_32(n.Y, n.X)*(1/twoPi) + 0.5
-		hue -= floor32(hue)
-		li := int(hue*crystalLUTSize) & (crystalLUTSize - 1)
-		rainbow := p.crystalLUT[li]
+		baseHue := atan2_32(n.Y, n.X)*(1/twoPi) + 0.5
 
-		p.crystalTriangle(a, b, c, n, rainbow, back)
+		p.crystalTriangle(a, b, c, n, baseHue, back)
 	}
 }
 
-func (p *Pipeline) crystalTriangle(a, b, c *vert, n m.Vec3, rainbow RGBf, back bool) {
+func (p *Pipeline) crystalTriangle(a, b, c *vert, n m.Vec3, baseHue float32, back bool) {
 	area := edge(a.sx, a.sy, b.sx, b.sy, c.sx, c.sy)
 	invArea := 1 / area
 
@@ -199,13 +200,13 @@ func (p *Pipeline) crystalTriangle(a, b, c *vert, n m.Vec3, rainbow RGBf, back b
 				Y: w0*a.oy + w1*b.oy + w2*c.oy,
 				Z: w0*a.oz + w1*b.oz + w2*c.oz,
 			}
-			col, alpha := p.crystalShadeFront(n, vdir, obj, rainbow, vz, idx)
+			col, alpha := p.crystalShadeFront(n, vdir, obj, baseHue, vz, idx)
 			p.blendPixel(o, col, alpha)
 		}
 	}
 }
 
-func (p *Pipeline) crystalShadeFront(n, v, obj m.Vec3, rainbow RGBf, vz float32, idx int) (RGBf, float32) {
+func (p *Pipeline) crystalShadeFront(n, v, obj m.Vec3, baseHue, vz float32, idx int) (RGBf, float32) {
 
 	ndv := n.Dot(v)
 	if ndv < 0 {
@@ -214,25 +215,35 @@ func (p *Pipeline) crystalShadeFront(n, v, obj m.Vec3, rainbow RGBf, vz float32,
 	fres := 1 - ndv
 	rim := fres * fres
 
-	half := m.Vec3{X: keyLight.X + v.X, Y: keyLight.Y + v.Y, Z: keyLight.Z + v.Z}.Normalize()
-	s := n.Dot(half)
-	if s < 0 {
-		s = 0
+	hue := baseHue + ndv*gratingDist
+	hue -= float32(fastFloorI(hue))
+	li := int(hue*crystalLUTSize) & (crystalLUTSize - 1)
+	rainbow := p.crystalLUT[li]
+
+	rdot := 2 * ndv
+	refl := m.Vec3{X: rdot*n.X - v.X, Y: rdot*n.Y - v.Y, Z: rdot*n.Z - v.Z}
+	envT := refl.Y*0.5 + 0.5
+	eh := refl.Dot(keyLight)
+	if eh < 0 {
+		eh = 0
 	}
-	s2 := s * s
-	s4 := s2 * s2
-	spec := s4 * s4 * s4 * s4
+	eh2 := eh * eh
+	eh4 := eh2 * eh2
+	envBase := envLo + (envHi-envLo)*envT + eh4*envSpot
+
+	spec := eh4 * eh4 * eh4 * eh4
 
 	body := 0.30 + 0.70*ndv
 	col := RGBf{accentf.R * body, accentf.G * body, accentf.B * body}
 
+	col.R += envBase * envGain
+	col.G += envBase * envGain * envChanG
+	col.B += envBase * envGain * envChanB
+
 	rimGain := 1.4 * rim
-	col.R += (rainbow.R - col.R) * rim
-	col.G += (rainbow.G - col.G) * rim
-	col.B += (rainbow.B - col.B) * rim
-	col.R += rimGain*rainbow.R + spec
-	col.G += rimGain*rainbow.G + spec
-	col.B += rimGain*rainbow.B + spec
+	col.R += (rainbow.R-col.R)*rim + rimGain*rainbow.R*0.7 + spec
+	col.G += (rainbow.G-col.G)*rim + rimGain*rainbow.G + spec
+	col.B += (rainbow.B-col.B)*rim + rimGain*rainbow.B*1.2 + spec
 
 	thick := (vz - p.backVZ[idx]) * p.sparkleInvR
 	if thick < 0 {
@@ -257,29 +268,49 @@ func (p *Pipeline) crystalShadeFront(n, v, obj m.Vec3, rainbow RGBf, vz float32,
 	col.G += coreCol.G * core * coreGain
 	col.B += coreCol.B * core * coreGain
 
-	gx := fastFloorI((obj.X - p.sparkleCenter.X) * p.sparkleInvR * sparkleDensity)
-	gy := fastFloorI((obj.Y - p.sparkleCenter.Y) * p.sparkleInvR * sparkleDensity)
-	gz := fastFloorI((obj.Z - p.sparkleCenter.Z) * p.sparkleInvR * sparkleDensity)
-	var rn m.Vec3
+	sgx := (obj.X - p.sparkleCenter.X) * p.sparkleInvR * sparkleDensity
+	sgy := (obj.Y - p.sparkleCenter.Y) * p.sparkleInvR * sparkleDensity
+	sgz := (obj.Z - p.sparkleCenter.Z) * p.sparkleInvR * sparkleDensity
+	gx := fastFloorI(sgx)
+	gy := fastFloorI(sgy)
+	gz := fastFloorI(sgz)
+	var rn, center m.Vec3
+	var tw float32
 	if p.spHas && gx == p.spCellX && gy == p.spCellY && gz == p.spCellZ {
-		rn = p.spRN
+		rn, center, tw = p.spRN, p.spCenter, p.spTw
 	} else {
 		rd := sparkleCellDir(gx, gy, gz)
 		rn = m.Vec3{X: rd.X + n.X, Y: rd.Y + n.Y, Z: rd.Z + n.Z}.Normalize()
-		p.spCellX, p.spCellY, p.spCellZ, p.spRN, p.spHas = gx, gy, gz, rn, true
+		h := uint32(gx)*73856093 ^ uint32(gy)*19349663 ^ uint32(gz)*83492791
+		ph := unitFromHash(hashU32(h)) * twoPi
+		tw = 0.55 + 0.45*sin32(p.crystalTime*sparkleTwSpeed+ph)
+		hc := hashU32(h ^ 0x9e3779b9)
+		center.X = sparkleJitter + (1-2*sparkleJitter)*unitFromHash(hc)
+		hc = hashU32(hc)
+		center.Y = sparkleJitter + (1-2*sparkleJitter)*unitFromHash(hc)
+		hc = hashU32(hc)
+		center.Z = sparkleJitter + (1-2*sparkleJitter)*unitFromHash(hc)
+		p.spCellX, p.spCellY, p.spCellZ = gx, gy, gz
+		p.spRN, p.spCenter, p.spTw, p.spHas = rn, center, tw, true
 	}
-	sd := v.Dot(rn)
-	if sd > 0 {
-		sd2 := sd * sd
-		sd4 := sd2 * sd2
-		sd8 := sd4 * sd4
-		sd16 := sd8 * sd8
-		sd32 := sd16 * sd16
-		sparkle := sd32 * sd32
-		sparkle *= 3.5
-		col.R += sparkle
-		col.G += sparkle
-		col.B += sparkle
+	dx := sgx - float32(gx) - center.X
+	dy := sgy - float32(gy) - center.Y
+	dz := sgz - float32(gz) - center.Z
+	fall := 1 - (dx*dx+dy*dy+dz*dz)*sparkleFalloff
+	if fall > 0 {
+		sd := v.Dot(rn)
+		if sd > 0 {
+			sd2 := sd * sd
+			sd4 := sd2 * sd2
+			sd8 := sd4 * sd4
+			sd16 := sd8 * sd8
+			sd32 := sd16 * sd16
+			sparkle := sd32 * sd32
+			sparkle *= 5.5 * tw * fall * fall
+			col.R += sparkle * (0.5 + 0.5*rainbow.R)
+			col.G += sparkle * (0.5 + 0.5*rainbow.G)
+			col.B += sparkle * (0.5 + 0.5*rainbow.B)
+		}
 	}
 
 	alpha := 0.30 + 0.65*rim + spec
@@ -291,7 +322,7 @@ func (p *Pipeline) crystalShadeFront(n, v, obj m.Vec3, rainbow RGBf, vz float32,
 	return col, alpha
 }
 
-const sparkleDensity = 70
+const sparkleDensity = 55
 
 func sparkleCellDir(gx, gy, gz int32) m.Vec3 {
 	h := uint32(gx)*73856093 ^ uint32(gy)*19349663 ^ uint32(gz)*83492791
@@ -312,6 +343,17 @@ const (
 	absorbAlpha = 0.80
 	coreGain    = 0.90
 	coreAlpha   = 0.35
+
+	gratingDist    = 2.5
+	envLo          = 0.04
+	envHi          = 0.22
+	envSpot        = 0.6
+	envGain        = 1.0
+	envChanG       = 0.6
+	envChanB       = 0.4
+	sparkleTwSpeed = 6.0
+	sparkleJitter  = 0.4
+	sparkleFalloff = 6.0
 )
 
 var coreCol = RGBf{1.0, 0.45, 0.15}
@@ -337,8 +379,8 @@ func (p *Pipeline) blendPixel(o int, src RGBf, alpha float32) {
 	p.pixels[o+3] = 255
 }
 
-func cos32(v float32) float32   { return float32(stdmath.Cos(float64(v))) }
-func floor32(v float32) float32 { return float32(stdmath.Floor(float64(v))) }
+func cos32(v float32) float32 { return float32(stdmath.Cos(float64(v))) }
+func sin32(v float32) float32 { return float32(stdmath.Sin(float64(v))) }
 
 func fastFloorI(x float32) int32 {
 	i := int32(x)

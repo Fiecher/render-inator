@@ -53,7 +53,8 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 
 	bigTri := wide >= 16 || maxY-minY >= 16
 
-	useTex := p.cfg.Texture && p.tex != nil && t.UV[0] >= 0 && t.UV[1] >= 0 && t.UV[2] >= 0 && len(msh.UVs) > 0
+	matCol, matImg, matChecker := p.triMaterial(t)
+	useTex := p.cfg.Texture && t.UV[0] >= 0 && t.UV[1] >= 0 && t.UV[2] >= 0 && len(msh.UVs) > 0 && (matImg != nil || matChecker != nil)
 	useLight := p.cfg.Lighting
 	perspTex := useTex && bigTri
 
@@ -64,7 +65,7 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 	hasImg := false
 	if useTex {
 		uvA, uvB, uvC = msh.UVs[t.UV[0]], msh.UVs[t.UV[1]], msh.UVs[t.UV[2]]
-		if it, ok := p.tex.(*ImageTexture); ok && it.W > 0 && it.H > 0 {
+		if it := matImg; it != nil && it.W > 0 && it.H > 0 {
 			texelArea := (uvB.X-uvA.X)*(uvC.Y-uvA.Y) - (uvB.Y-uvA.Y)*(uvC.X-uvA.X)
 			if texelArea < 0 {
 				texelArea = -texelArea
@@ -81,7 +82,7 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 
 	spec := useLight && !p.cfg.Flat
 	lit := useLight
-	baseCol := p.flat
+	baseCol := matCol
 	var iA, iB, iC float32
 	var dA, dB, dC float32
 	if useLight {
@@ -89,7 +90,7 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 			fi := vertLight(msh.FaceNormals[ti], toLight)
 			iA, iB, iC = fi, fi, fi
 			if !useTex {
-				baseCol = p.flat.scale(fi)
+				baseCol = matCol.scale(fi)
 				lit = false
 			}
 		} else {
@@ -169,7 +170,7 @@ func (p *Pipeline) rasterizeTriangle(msh *model.Mesh, ti int, t *model.Tri, a, b
 					_ = texPix[to+3]
 					col = RGBA{texPix[to], texPix[to+1], texPix[to+2], texPix[to+3]}
 				} else {
-					col = p.tex.ColorAt(uu, vv)
+					col = matChecker.ColorAt(uu, vv)
 				}
 			}
 			p.zbuf.data[idx] = depth
