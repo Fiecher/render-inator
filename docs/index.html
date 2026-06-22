@@ -84,7 +84,16 @@
   aside {
     width: 300px; padding: 22px 20px; overflow-y: auto;
     background: var(--panel); border-left: 1px solid var(--line);
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
   }
+  aside::-webkit-scrollbar { width: 8px; }
+  aside::-webkit-scrollbar-track { background: transparent; }
+  aside::-webkit-scrollbar-thumb {
+    background: var(--line); border-radius: 4px;
+    border: 2px solid var(--panel);
+  }
+  aside::-webkit-scrollbar-thumb:hover { background: var(--muted); }
   .brand { margin: 0 0 22px; }
   h1 {
     margin: 0; font-family: var(--font-display); font-weight: 400;
@@ -93,7 +102,7 @@
   h1 .dot { color: var(--accent); }
   fieldset {
     border: none; border-top: 1px solid var(--line);
-    margin: 0; padding: 16px 0 8px;
+    margin: 0; padding: 16px 0 8px; min-width: 0;
   }
   legend {
     display: block; padding: 0; margin-bottom: 10px;
@@ -169,7 +178,7 @@
     border-color: var(--accent); color: var(--accent);
     box-shadow: inset 3px 0 0 var(--accent);
   }
-  .models li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .models li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .models li .del {
     width: auto; margin: 0; padding: 0 2px; border: none;
     background: none; color: var(--muted);
